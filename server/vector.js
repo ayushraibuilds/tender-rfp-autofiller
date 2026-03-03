@@ -2,12 +2,17 @@ import OpenAI from 'openai'
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 const FALLBACK_DIMENSIONS = 256
-const EMBEDDING_PROVIDER = (process.env.EMBEDDING_PROVIDER || 'ollama').toLowerCase()
+const EMBEDDING_PROVIDER = (process.env.EMBEDDING_PROVIDER || 'groq').toLowerCase()
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434'
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2'
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1'
+const GROQ_EMBEDDING_MODEL = process.env.GROQ_EMBEDDING_MODEL || 'text-embedding-3-small'
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null
+const groq = process.env.GROQ_API_KEY
+  ? new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL: GROQ_BASE_URL })
   : null
 
 function tokenize(text) {
@@ -66,6 +71,22 @@ export async function embedTexts(texts) {
     return response.data.map((item) => item.embedding)
   }
 
+  if (EMBEDDING_PROVIDER === 'groq') {
+    try {
+      if (!groq) {
+        throw new Error('GROQ_API_KEY is required when EMBEDDING_PROVIDER=groq')
+      }
+
+      const response = await groq.embeddings.create({
+        model: GROQ_EMBEDDING_MODEL,
+        input: sanitized,
+      })
+      return response.data.map((item) => item.embedding)
+    } catch {
+      return sanitized.map((text) => fallbackEmbedOne(text))
+    }
+  }
+
   if (EMBEDDING_PROVIDER === 'ollama') {
     try {
       const embeddings = await Promise.all(
@@ -120,6 +141,9 @@ export function isUsingOpenAIEmbeddings() {
 export function getEmbeddingBackendLabel() {
   if (EMBEDDING_PROVIDER === 'openai') {
     return 'openai'
+  }
+  if (EMBEDDING_PROVIDER === 'groq') {
+    return `groq:${GROQ_EMBEDDING_MODEL}`
   }
   if (EMBEDDING_PROVIDER === 'ollama') {
     return `ollama:${OLLAMA_MODEL}`

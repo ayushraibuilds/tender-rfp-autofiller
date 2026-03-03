@@ -34,6 +34,16 @@ function summarizeDraftForExport(draft) {
   }))
 }
 
+function confidenceBand(score) {
+  if (score >= 0.75) {
+    return 'green'
+  }
+  if (score >= 0.45) {
+    return 'yellow'
+  }
+  return 'red'
+}
+
 function buildFtsQuery(input) {
   const tokens = String(input)
     .toLowerCase()
@@ -46,33 +56,51 @@ function buildFtsQuery(input) {
   return tokens.map((token) => `${token}*`).join(' OR ')
 }
 
-async function getCandidateChunks(db, workspaceId, query, limit = 300) {
+function buildCutoffIso(recentDays) {
+  if (!recentDays) {
+    return null
+  }
+  const cutoff = new Date(Date.now() - recentDays * 24 * 60 * 60 * 1000)
+  return cutoff.toISOString()
+}
+
+async function getCandidateChunks(db, workspaceId, query, options = {}) {
+  const { limit = 300, recentDays = null } = options
+  const cutoffIso = buildCutoffIso(recentDays)
   const ftsQuery = buildFtsQuery(query)
+
   if (!ftsQuery) {
     return db.all(
       `
-      SELECT chunks.id, chunks.content, chunks.embedding, documents.file_name, documents.version
+      SELECT chunks.id, chunks.content, chunks.embedding, documents.file_name, documents.version, documents.added_at
       FROM chunks
       JOIN documents ON documents.id = chunks.document_id
       WHERE chunks.company_id = ?
+      AND (? IS NULL OR documents.added_at >= ?)
       LIMIT ?
       `,
       workspaceId,
+      cutoffIso,
+      cutoffIso,
       limit,
     )
   }
 
   const ftsRows = await db.all(
     `
-    SELECT c.id, c.content, c.embedding, d.file_name, d.version
+    SELECT c.id, c.content, c.embedding, d.file_name, d.version, d.added_at
     FROM chunks_fts f
     JOIN chunks c ON c.id = f.chunk_id
     JOIN documents d ON d.id = c.document_id
-    WHERE f.company_id = ? AND chunks_fts MATCH ?
+    WHERE f.company_id = ?
+    AND chunks_fts MATCH ?
+    AND (? IS NULL OR d.added_at >= ?)
     LIMIT ?
     `,
     workspaceId,
     ftsQuery,
+    cutoffIso,
+    cutoffIso,
     limit,
   )
 
@@ -82,13 +110,16 @@ async function getCandidateChunks(db, workspaceId, query, limit = 300) {
 
   return db.all(
     `
-    SELECT chunks.id, chunks.content, chunks.embedding, documents.file_name, documents.version
+    SELECT chunks.id, chunks.content, chunks.embedding, documents.file_name, documents.version, documents.added_at
     FROM chunks
     JOIN documents ON documents.id = chunks.document_id
     WHERE chunks.company_id = ?
+    AND (? IS NULL OR documents.added_at >= ?)
     LIMIT ?
     `,
     workspaceId,
+    cutoffIso,
+    cutoffIso,
     limit,
   )
 }
@@ -106,11 +137,198 @@ async function assertWorkspaceAccess(userId, workspaceId) {
   return { ok: true, membership }
 }
 
+function toPortalXml(platform, workspaceId, rows) {
+  const escaped = (value) =>
+    String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;')
+
+  const items = rows
+    .map(
+      (row, idx) =>
+        `  <item index="${idx + 1}">\n    <question>${escaped(row.question)}</question>\n    <answer>${escaped(row.answer)}</answer>\n    <confidence>${escaped(row.confidence)}</confidence>\n    <status>${escaped(row.status)}</status>\n    <source>${escaped(row.source)}</source>\n  </item>`,
+    )
+    .join('\n')
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<portalExport platform="${escaped(platform)}" workspaceId="${escaped(workspaceId)}">\n${items}\n</portalExport>`
+}
+
+async function writeFilledWorkbook(templateBuffer, draftRows) {
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(templateBuffer)
+
+  const normalizedDraft = draftRows.map((item) => ({
+    question: String(item.question || '').trim(),
+    answer: String(item.answer || '').trim(),
+    confidence: String(item.confidence || '').trim(),
+  }))
+
+  for (const sheet of workbook.worksheets) {
+    const answerCol = sheet.columnCount + 1
+    const confidenceCol = sheet.columnCount + 2
+    sheet.getRow(1).getCell(answerCol).value = 'AI Answer'
+    sheet.getRow(1).getCell(confidenceCol).value = 'AI Confidence'
+
+    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+      const row = sheet.getRow(rowNumber)
+      const rowText = row.values
+        .slice(1)
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+
+      if (!rowText) {
+        continue
+      }
+
+      const match = normalizedDraft.find((item) => {
+        const q = item.question.toLowerCase()
+        return rowText.includes(q) || q.includes(rowText)
+      })
+
+      if (!match) {
+        continue
+      }
+
+      row.getCell(answerCol).value = match.answer
+      row.getCell(confidenceCol).value = match.confidence
+    }
+  }
+
+  const summarySheet = workbook.addWorksheet('AI Answers')
+  summarySheet.columns = [
+    { header: 'Question', key: 'question', width: 45 },
+    { header: 'Answer', key: 'answer', width: 80 },
+    { header: 'Confidence', key: 'confidence', width: 14 },
+  ]
+  normalizedDraft.forEach((row) => summarySheet.addRow(row))
+
+  return workbook.xlsx.writeBuffer()
+}
+
+function deriveClarifyingQuestions(draft) {
+  if (!Array.isArray(draft)) {
+    return []
+  }
+
+  const questions = []
+  for (const item of draft) {
+    const confidence = Number(item.confidence || 0)
+    if (confidence >= 0.65) {
+      continue
+    }
+
+    const qText = String(item.question || '').toLowerCase()
+
+    questions.push(`Can you provide exact client/project details for: "${item.question}"?`)
+    if (qText.includes('pricing') || qText.includes('commercial')) {
+      questions.push('What are your exact pricing assumptions, taxes, and payment milestones?')
+    }
+    if (qText.includes('timeline') || qText.includes('delivery')) {
+      questions.push('What delivery dates and milestone plan should be committed in this bid?')
+    }
+    if (qText.includes('security') || qText.includes('policy')) {
+      questions.push('Which certifications and policy controls should we explicitly mention?')
+    }
+  }
+
+  return Array.from(new Set(questions)).slice(0, 8)
+}
+
+const INDIA_TEMPLATES = [
+  {
+    id: 'gst-compliance',
+    title: 'GST Compliance Statement',
+    body: 'Our organization is GST compliant and will provide GSTIN, tax invoice format, and applicable HSN/SAC codes as per contract requirements.',
+  },
+  {
+    id: 'iso-27001',
+    title: 'ISO 27001 Security Statement',
+    body: 'We maintain an information security management framework aligned to ISO 27001 controls, with periodic audit and access governance reviews.',
+  },
+  {
+    id: 'meity-guidelines',
+    title: 'MeitY-Aligned Data Handling',
+    body: 'Data handling and security practices align with applicable MeitY guidance and Indian regulatory obligations for confidentiality and retention.',
+  },
+]
+
+const PLAN_CONFIG = {
+  free: { tenderLimitPerMonth: 3, allowFilledExcelExport: false },
+  pro: { tenderLimitPerMonth: Number.POSITIVE_INFINITY, allowFilledExcelExport: true },
+  team: { tenderLimitPerMonth: Number.POSITIVE_INFINITY, allowFilledExcelExport: true },
+}
+
+function normalizePlan(input) {
+  const plan = String(input || 'free').toLowerCase()
+  return plan === 'pro' || plan === 'team' ? plan : 'free'
+}
+
+function currentUsageMonth() {
+  return new Date().toISOString().slice(0, 7)
+}
+
+async function getWorkspacePlanUsage(db, workspaceId) {
+  const workspace = await db.get(
+    'SELECT id, plan, tender_usage_month, tender_usage_count FROM workspaces WHERE id = ?',
+    workspaceId,
+  )
+
+  if (!workspace) {
+    return null
+  }
+
+  const plan = normalizePlan(workspace.plan)
+  const month = currentUsageMonth()
+  const storedMonth = String(workspace.tender_usage_month || '')
+  const rawCount = Number(workspace.tender_usage_count || 0)
+  const usageCount = storedMonth === month ? rawCount : 0
+
+  if (storedMonth !== month || workspace.plan !== plan || rawCount !== usageCount) {
+    await db.run(
+      'UPDATE workspaces SET plan = ?, tender_usage_month = ?, tender_usage_count = ? WHERE id = ?',
+      plan,
+      month,
+      usageCount,
+      workspaceId,
+    )
+  }
+
+  const cfg = PLAN_CONFIG[plan]
+  const remaining =
+    cfg.tenderLimitPerMonth === Number.POSITIVE_INFINITY
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, cfg.tenderLimitPerMonth - usageCount)
+
+  return {
+    plan,
+    usageMonth: month,
+    usageCount,
+    tenderLimitPerMonth: cfg.tenderLimitPerMonth,
+    tenderRemaining: remaining,
+    allowFilledExcelExport: cfg.allowFilledExcelExport,
+  }
+}
+
+async function incrementTenderUsage(db, workspaceId, usage) {
+  const nextCount = usage.usageCount + 1
+  await db.run(
+    'UPDATE workspaces SET tender_usage_month = ?, tender_usage_count = ? WHERE id = ?',
+    usage.usageMonth,
+    nextCount,
+    workspaceId,
+  )
+}
+
 export function createApp() {
   const app = express()
 
   app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }))
-  app.use(express.json({ limit: '2mb' }))
+  app.use(express.json({ limit: '4mb' }))
   app.use(
     rateLimit({
       windowMs: 15 * 60 * 1000,
@@ -122,6 +340,10 @@ export function createApp() {
 
   app.get('/api/health', async (_req, res) => {
     res.json({ ok: true, embeddings: getEmbeddingBackendLabel() })
+  })
+
+  app.get('/api/templates/india', requireAuth, async (_req, res) => {
+    res.json({ templates: INDIA_TEMPLATES })
   })
 
   app.post('/api/auth/register', async (req, res) => {
@@ -168,10 +390,13 @@ export function createApp() {
         const membershipId = crypto.randomUUID()
 
         await db.run(
-          'INSERT INTO workspaces (id, name, created_by_user_id, created_at) VALUES (?, ?, ?, ?)',
+          'INSERT INTO workspaces (id, name, created_by_user_id, plan, tender_usage_month, tender_usage_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
           workspaceId,
           workspaceName,
           userId,
+          'free',
+          currentUsageMonth(),
+          0,
           now,
         )
 
@@ -184,7 +409,13 @@ export function createApp() {
           now,
         )
 
-        firstWorkspace = { id: workspaceId, name: workspaceName, role: 'owner' }
+        firstWorkspace = {
+          id: workspaceId,
+          name: workspaceName,
+          role: 'owner',
+          plan: 'free',
+          tenderUsage: { month: currentUsageMonth(), used: 0, limit: 3, remaining: 3 },
+        }
       }
 
       const token = signAccessToken({ userId, email, name })
@@ -224,7 +455,7 @@ export function createApp() {
 
       const workspaces = await db.all(
         `
-        SELECT w.id, w.name, m.role
+        SELECT w.id, w.name, m.role, w.plan, w.tender_usage_month, w.tender_usage_count
         FROM workspace_memberships m
         JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.user_id = ?
@@ -235,10 +466,29 @@ export function createApp() {
 
       const token = signAccessToken({ userId: user.id, email: user.email, name: user.name })
 
+      const normalizedWorkspaces = workspaces.map((workspace) => {
+        const plan = normalizePlan(workspace.plan)
+        const month = currentUsageMonth()
+        const used = workspace.tender_usage_month === month ? Number(workspace.tender_usage_count || 0) : 0
+        const limit = PLAN_CONFIG[plan].tenderLimitPerMonth
+        return {
+          id: workspace.id,
+          name: workspace.name,
+          role: workspace.role,
+          plan,
+          tenderUsage: {
+            month,
+            used,
+            limit: Number.isFinite(limit) ? limit : null,
+            remaining: Number.isFinite(limit) ? Math.max(0, limit - used) : null,
+          },
+        }
+      })
+
       res.json({
         token,
         user: { id: user.id, name: user.name, email: user.email },
-        workspaces,
+        workspaces: normalizedWorkspaces,
       })
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
@@ -257,7 +507,7 @@ export function createApp() {
 
       const workspaces = await db.all(
         `
-        SELECT w.id, w.name, m.role
+        SELECT w.id, w.name, m.role, w.plan, w.tender_usage_month, w.tender_usage_count
         FROM workspace_memberships m
         JOIN workspaces w ON w.id = m.workspace_id
         WHERE m.user_id = ?
@@ -266,7 +516,26 @@ export function createApp() {
         user.id,
       )
 
-      res.json({ user, workspaces })
+      const normalizedWorkspaces = workspaces.map((workspace) => {
+        const plan = normalizePlan(workspace.plan)
+        const month = currentUsageMonth()
+        const used = workspace.tender_usage_month === month ? Number(workspace.tender_usage_count || 0) : 0
+        const limit = PLAN_CONFIG[plan].tenderLimitPerMonth
+        return {
+          id: workspace.id,
+          name: workspace.name,
+          role: workspace.role,
+          plan,
+          tenderUsage: {
+            month,
+            used,
+            limit: Number.isFinite(limit) ? limit : null,
+            remaining: Number.isFinite(limit) ? Math.max(0, limit - used) : null,
+          },
+        }
+      })
+
+      res.json({ user, workspaces: normalizedWorkspaces })
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
     }
@@ -287,10 +556,13 @@ export function createApp() {
       const now = new Date().toISOString()
 
       await db.run(
-        'INSERT INTO workspaces (id, name, created_by_user_id, created_at) VALUES (?, ?, ?, ?)',
+        'INSERT INTO workspaces (id, name, created_by_user_id, plan, tender_usage_month, tender_usage_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         workspaceId,
         name,
         req.auth.userId,
+        'free',
+        currentUsageMonth(),
+        0,
         now,
       )
 
@@ -303,7 +575,85 @@ export function createApp() {
         now,
       )
 
-      res.status(201).json({ workspace: { id: workspaceId, name, role: 'owner' } })
+      res.status(201).json({
+        workspace: {
+          id: workspaceId,
+          name,
+          role: 'owner',
+          plan: 'free',
+          tenderUsage: { month: currentUsageMonth(), used: 0, limit: 3, remaining: 3 },
+        },
+      })
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
+    }
+  })
+
+  app.get('/api/workspaces/:workspaceId/usage', requireAuth, async (req, res) => {
+    const workspaceId = sanitizeWorkspaceId(req.params.workspaceId)
+
+    try {
+      const access = await assertWorkspaceAccess(req.auth.userId, workspaceId)
+      if (!access.ok) {
+        res.status(403).json({ error: access.error })
+        return
+      }
+
+      const db = await getDb()
+      const usage = await getWorkspacePlanUsage(db, workspaceId)
+      if (!usage) {
+        res.status(404).json({ error: 'Workspace not found.' })
+        return
+      }
+
+      res.json({
+        workspaceId,
+        plan: usage.plan,
+        tenderUsage: {
+          month: usage.usageMonth,
+          used: usage.usageCount,
+          limit: Number.isFinite(usage.tenderLimitPerMonth) ? usage.tenderLimitPerMonth : null,
+          remaining: Number.isFinite(usage.tenderRemaining) ? usage.tenderRemaining : null,
+        },
+        features: {
+          filledExcelExport: usage.allowFilledExcelExport,
+        },
+      })
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
+    }
+  })
+
+  app.post('/api/workspaces/:workspaceId/plan', requireAuth, async (req, res) => {
+    const workspaceId = sanitizeWorkspaceId(req.params.workspaceId)
+    const nextPlan = normalizePlan(req.body.plan)
+
+    try {
+      const access = await assertWorkspaceAccess(req.auth.userId, workspaceId)
+      if (!access.ok) {
+        res.status(403).json({ error: access.error })
+        return
+      }
+
+      if (access.membership.role !== 'owner') {
+        res.status(403).json({ error: 'Only workspace owner can change plan.' })
+        return
+      }
+
+      const db = await getDb()
+      await db.run('UPDATE workspaces SET plan = ? WHERE id = ?', nextPlan, workspaceId)
+      const usage = await getWorkspacePlanUsage(db, workspaceId)
+
+      res.json({
+        workspaceId,
+        plan: usage.plan,
+        tenderUsage: {
+          month: usage.usageMonth,
+          used: usage.usageCount,
+          limit: Number.isFinite(usage.tenderLimitPerMonth) ? usage.tenderLimitPerMonth : null,
+          remaining: Number.isFinite(usage.tenderRemaining) ? usage.tenderRemaining : null,
+        },
+      })
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
     }
@@ -426,6 +776,7 @@ export function createApp() {
     const workspaceId = sanitizeWorkspaceId(req.body.workspaceId)
     const query = String(req.body.query || '').trim()
     const topK = Math.max(1, Math.min(20, Number(req.body.topK || 5)))
+    const useLastQuarter = Boolean(req.body.useLastQuarter)
 
     if (!query) {
       res.status(400).json({ error: 'Query is required.' })
@@ -441,7 +792,9 @@ export function createApp() {
 
       const db = await getDb()
       const queryEmbedding = (await embedTexts([query]))[0]
-      const rows = await getCandidateChunks(db, workspaceId, query)
+      const rows = await getCandidateChunks(db, workspaceId, query, {
+        recentDays: useLastQuarter ? 90 : null,
+      })
 
       const scored = rows
         .map((row) => {
@@ -452,6 +805,7 @@ export function createApp() {
             content: row.content,
             source: `${row.file_name} (v${row.version})`,
             score,
+            band: confidenceBand(score),
           }
         })
         .sort((a, b) => b.score - a.score)
@@ -498,6 +852,7 @@ export function createApp() {
     const questions = Array.isArray(req.body.questions)
       ? req.body.questions.map((item) => String(item).trim()).filter(Boolean)
       : []
+    const useLastQuarter = Boolean(req.body.useLastQuarter)
 
     if (questions.length === 0) {
       res.status(400).json({ error: 'Questions are required.' })
@@ -512,13 +867,33 @@ export function createApp() {
       }
 
       const db = await getDb()
+      const usage = await getWorkspacePlanUsage(db, workspaceId)
+      if (!usage) {
+        res.status(404).json({ error: 'Workspace not found.' })
+        return
+      }
+      if (Number.isFinite(usage.tenderRemaining) && usage.tenderRemaining <= 0) {
+        res.status(402).json({
+          error: 'Free plan limit reached (3 tenders/month). Upgrade to Pro for unlimited drafts.',
+          plan: usage.plan,
+          tenderUsage: {
+            month: usage.usageMonth,
+            used: usage.usageCount,
+            limit: usage.tenderLimitPerMonth,
+            remaining: usage.tenderRemaining,
+          },
+        })
+        return
+      }
       const questionEmbeddings = await embedTexts(questions)
 
       const draft = []
       for (let idx = 0; idx < questions.length; idx += 1) {
         const question = questions[idx]
         const questionEmbedding = questionEmbeddings[idx]
-        const rows = await getCandidateChunks(db, workspaceId, question)
+        const rows = await getCandidateChunks(db, workspaceId, question, {
+          recentDays: useLastQuarter ? 90 : null,
+        })
 
         if (rows.length === 0) {
           draft.push({
@@ -526,8 +901,10 @@ export function createApp() {
             question,
             answer: 'No indexed knowledge found for this workspace.',
             confidence: 0,
+            band: 'red',
             status: 'needs-attention',
             source: 'No strong match found',
+            citations: [],
           })
           continue
         }
@@ -545,6 +922,11 @@ export function createApp() {
         const topScore = topMatches[0]?.score ?? 0
         const evidence = topMatches.map((match) => match.content.slice(0, 260)).join(' ')
         const sourceSet = Array.from(new Set(topMatches.map((match) => match.source)))
+        const citations = topMatches.map((match) => ({
+          source: match.source,
+          snippet: match.content.slice(0, 260),
+          score: Number(Math.max(0, Math.min(1, match.score)).toFixed(2)),
+        }))
 
         draft.push({
           id: `q-${idx + 1}`,
@@ -554,12 +936,46 @@ export function createApp() {
               ? `Based on previous winning proposals: ${evidence}`
               : 'Low-confidence retrieval. Please provide a tailored response with project-specific details.',
           confidence: Number(Math.max(0, Math.min(1, topScore)).toFixed(2)),
+          band: confidenceBand(topScore),
           status: topScore >= 0.28 ? 'ready' : 'needs-attention',
           source: sourceSet.join(', ') || 'No strong match found',
+          citations,
         })
       }
 
-      res.json({ workspaceId, draft })
+      await incrementTenderUsage(db, workspaceId, usage)
+
+      const nextUsed = usage.usageCount + 1
+      const limit = usage.tenderLimitPerMonth
+      res.json({
+        workspaceId,
+        draft,
+        plan: usage.plan,
+        tenderUsage: {
+          month: usage.usageMonth,
+          used: nextUsed,
+          limit: Number.isFinite(limit) ? limit : null,
+          remaining: Number.isFinite(limit) ? Math.max(0, limit - nextUsed) : null,
+        },
+      })
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
+    }
+  })
+
+  app.post('/api/tender/clarify', requireAuth, async (req, res) => {
+    const workspaceId = sanitizeWorkspaceId(req.body.workspaceId)
+    const draft = Array.isArray(req.body.draft) ? req.body.draft : []
+
+    try {
+      const access = await assertWorkspaceAccess(req.auth.userId, workspaceId)
+      if (!access.ok) {
+        res.status(403).json({ error: access.error })
+        return
+      }
+
+      const clarifications = deriveClarifyingQuestions(draft)
+      res.json({ workspaceId, clarifications })
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
     }
@@ -632,6 +1048,96 @@ export function createApp() {
       }
 
       res.status(400).json({ error: 'Unsupported export format. Use xlsx or pdf.' })
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
+    }
+  })
+
+  app.post('/api/tender/export-filled', requireAuth, upload.single('file'), async (req, res) => {
+    const workspaceId = sanitizeWorkspaceId(req.body.workspaceId)
+    const file = req.file
+    let draft = []
+
+    try {
+      draft = JSON.parse(String(req.body.draft || '[]'))
+    } catch {
+      res.status(400).json({ error: 'Invalid draft payload.' })
+      return
+    }
+
+    if (!file) {
+      res.status(400).json({ error: 'Original xlsx file is required.' })
+      return
+    }
+
+    if (!file.originalname.toLowerCase().endsWith('.xlsx')) {
+      res.status(400).json({ error: 'Only .xlsx template files are supported for filled export.' })
+      return
+    }
+
+    try {
+      const access = await assertWorkspaceAccess(req.auth.userId, workspaceId)
+      if (!access.ok) {
+        res.status(403).json({ error: access.error })
+        return
+      }
+
+      const db = await getDb()
+      const usage = await getWorkspacePlanUsage(db, workspaceId)
+      if (!usage) {
+        res.status(404).json({ error: 'Workspace not found.' })
+        return
+      }
+      if (!usage.allowFilledExcelExport) {
+        res.status(402).json({
+          error: 'Filled Excel export is available on Pro and Team plans only.',
+          plan: usage.plan,
+        })
+        return
+      }
+
+      const buffer = await writeFilledWorkbook(file.buffer, draft)
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      )
+      res.setHeader('Content-Disposition', 'attachment; filename="tender-filled.xlsx"')
+      res.send(Buffer.from(buffer))
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to generate filled excel.' })
+    }
+  })
+
+  app.post('/api/tender/export-portal', requireAuth, async (req, res) => {
+    const workspaceId = sanitizeWorkspaceId(req.body.workspaceId)
+    const format = String(req.body.format || 'json').toLowerCase()
+    const platform = String(req.body.platform || 'generic').toLowerCase()
+    const rows = summarizeDraftForExport(req.body.draft)
+
+    if (rows.length === 0) {
+      res.status(400).json({ error: 'Draft content is required.' })
+      return
+    }
+
+    try {
+      const access = await assertWorkspaceAccess(req.auth.userId, workspaceId)
+      if (!access.ok) {
+        res.status(403).json({ error: access.error })
+        return
+      }
+
+      if (format === 'json') {
+        res.json({ platform, workspaceId, items: rows })
+        return
+      }
+
+      if (format === 'xml') {
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8')
+        res.send(toPortalXml(platform, workspaceId, rows))
+        return
+      }
+
+      res.status(400).json({ error: 'Unsupported format. Use json or xml.' })
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'Server error.' })
     }

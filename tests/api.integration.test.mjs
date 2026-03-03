@@ -149,4 +149,100 @@ describe('API integration', () => {
     expect(exportXlsx.status).toBe(200)
     expect(exportXlsx.headers['content-type']).toContain('spreadsheetml.sheet')
   })
+
+  it('enforces free tier tender limits and filled excel gating', async () => {
+    const app = createApp()
+    const user = await registerAndGetSession(app, 'tiers.test@example.com', 'Tier Workspace')
+
+    const questionPayload = {
+      workspaceId: user.workspaceId,
+      questions: ['Describe your team structure and governance model for this tender.'],
+    }
+
+    for (let i = 1; i <= 3; i += 1) {
+      const draft = await request(app)
+        .post('/api/tender/draft')
+        .set('Authorization', `Bearer ${user.token}`)
+        .send(questionPayload)
+
+      expect(draft.status).toBe(200)
+      expect(draft.body.tenderUsage.used).toBe(i)
+      expect(draft.body.plan).toBe('free')
+    }
+
+    const blocked = await request(app)
+      .post('/api/tender/draft')
+      .set('Authorization', `Bearer ${user.token}`)
+      .send(questionPayload)
+
+    expect(blocked.status).toBe(402)
+    expect(blocked.body.error).toContain('Free plan limit')
+
+    const usage = await request(app)
+      .get(`/api/workspaces/${user.workspaceId}/usage`)
+      .set('Authorization', `Bearer ${user.token}`)
+
+    expect(usage.status).toBe(200)
+    expect(usage.body.plan).toBe('free')
+    expect(usage.body.tenderUsage.used).toBe(3)
+    expect(usage.body.tenderUsage.remaining).toBe(0)
+
+    const workbook = new ExcelJS.Workbook()
+    const sheet = workbook.addWorksheet('RFP')
+    sheet.addRow(['Question'])
+    sheet.addRow(['Describe your team structure and governance model for this tender.'])
+    const xlsxBuffer = Buffer.from(await workbook.xlsx.writeBuffer())
+
+    const blockedExport = await request(app)
+      .post('/api/tender/export-filled')
+      .set('Authorization', `Bearer ${user.token}`)
+      .field('workspaceId', user.workspaceId)
+      .field(
+        'draft',
+        JSON.stringify([
+          {
+            question: 'Describe your team structure and governance model for this tender.',
+            answer: 'Sample answer for team structure and governance.',
+            confidence: 0.72,
+          },
+        ]),
+      )
+      .attach('file', xlsxBuffer, {
+        filename: 'template.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      })
+
+    expect(blockedExport.status).toBe(402)
+    expect(blockedExport.body.error).toContain('Pro and Team')
+
+    const upgrade = await request(app)
+      .post(`/api/workspaces/${user.workspaceId}/plan`)
+      .set('Authorization', `Bearer ${user.token}`)
+      .send({ plan: 'pro' })
+
+    expect(upgrade.status).toBe(200)
+    expect(upgrade.body.plan).toBe('pro')
+
+    const allowedExport = await request(app)
+      .post('/api/tender/export-filled')
+      .set('Authorization', `Bearer ${user.token}`)
+      .field('workspaceId', user.workspaceId)
+      .field(
+        'draft',
+        JSON.stringify([
+          {
+            question: 'Describe your team structure and governance model for this tender.',
+            answer: 'Sample answer for team structure and governance.',
+            confidence: 0.72,
+          },
+        ]),
+      )
+      .attach('file', xlsxBuffer, {
+        filename: 'template.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      })
+
+    expect(allowedExport.status).toBe(200)
+    expect(allowedExport.headers['content-type']).toContain('spreadsheetml.sheet')
+  })
 })

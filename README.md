@@ -3,18 +3,20 @@
 Tender/RFP auto-filler for agencies, construction teams, and IT service companies.
 
 ## What is implemented
-- Frontend: contractor-friendly workflow with drag-drop upload, folder upload, side-by-side review, and export actions.
-- Backend: Express API with document parsing, transactional indexing, hybrid retrieval (FTS prefilter + vector rerank), and draft export.
+- Frontend: contractor-friendly workflow with drag-drop upload, folder upload, side-by-side review, editable answers, trust tags, and export actions.
+- Backend: Express API with document parsing, transactional indexing, hybrid retrieval (FTS prefilter + vector rerank), and multiple export paths.
 - Auth: JWT-based register/login with workspace membership checks.
 - Workspace isolation: all indexing and retrieval are scoped per workspace.
 - Knowledge versioning: repeated uploads of same source path auto-increment versions.
+- Subscription tiers: Free/Pro/Team plans with tender usage tracking and feature gates.
 - Storage: SQLite database persisted at `server/data/knowledge.db`.
+- Browser extension MVP for portal autofill from draft JSON.
 
 ## Tech stack
 - Frontend: React + Vite + TypeScript
 - Backend: Node.js + Express
 - Parsing: `pdf-parse`, `mammoth`, `exceljs`
-- Vector search: local Ollama embeddings by default; OpenAI optional premium mode
+- Vector search: Groq by default; Ollama/OpenAI optional
 - Export: `exceljs`, `pdfkit`
 - Database: SQLite (`sqlite3` + `sqlite`)
 
@@ -30,14 +32,21 @@ cp .env.example .env
 ```
 
 3. Choose embeddings backend:
-- Default private/local mode:
+- Default Groq mode:
+```bash
+EMBEDDING_PROVIDER=groq
+GROQ_API_KEY=your_key_here
+GROQ_EMBEDDING_MODEL=text-embedding-3-small
+```
+
+- Local/private mode:
 ```bash
 EMBEDDING_PROVIDER=ollama
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.2
 ```
 
-- Premium OpenAI mode:
+- OpenAI mode:
 ```bash
 EMBEDDING_PROVIDER=openai
 OPENAI_API_KEY=your_key_here
@@ -75,17 +84,28 @@ Backend: `http://localhost:8787`
 - `POST /api/auth/login`
 - `GET /api/auth/me`
 - `POST /api/workspaces`
+- `GET /api/workspaces/:workspaceId/usage` (plan + monthly tender usage)
+- `POST /api/workspaces/:workspaceId/plan` (owner-only plan change)
 - `POST /api/knowledge/index` (`multipart/form-data`, fields: `workspaceId`, `files[]`, requires auth)
 - `POST /api/retrieve` (`workspaceId`, `query`, `topK`, requires auth)
+- `GET /api/templates/india` (preloaded India-specific templates)
 - `POST /api/tender/parse` (`multipart/form-data`, fields: `workspaceId`, `file`, requires auth)
-- `POST /api/tender/draft` (`workspaceId`, `questions[]`, requires auth)
+- `POST /api/tender/draft` (`workspaceId`, `questions[]`, `useLastQuarter`, requires auth)
+  - Free plan: max 3 draft generations per workspace per month
+- `POST /api/tender/clarify` (`workspaceId`, `draft[]`, returns clarifying questions)
 - `POST /api/tender/export` (`workspaceId`, `draft[]`, `format=xlsx|pdf`, requires auth)
+- `POST /api/tender/export-filled` (`workspaceId`, `file:.xlsx`, `draft[]`, returns filled workbook; Pro/Team only)
+- `POST /api/tender/export-portal` (`workspaceId`, `draft[]`, `format=json|xml`, `platform`, requires auth)
 
 ## Production readiness
 - Rate limiting is enabled globally (`RATE_LIMIT_MAX` requests per 15 minutes).
 - JWT secret enforcement is enabled for production startup.
 - Indexing writes use DB transactions to prevent partial document/chunk inserts.
 - Retrieval uses SQLite FTS prefiltering before vector similarity reranking.
+
+## Browser extension (MVP)
+- Folder: `extension/`
+- Supports one-click fill of questionnaire forms from TenderPilot draft JSON payload.
 
 ## Deploy quick path
 - Railway:

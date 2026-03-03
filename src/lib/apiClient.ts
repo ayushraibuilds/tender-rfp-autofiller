@@ -15,8 +15,14 @@ export type DraftQuestion = {
   question: string
   answer: string
   confidence: number
+  band?: 'green' | 'yellow' | 'red'
   status: 'ready' | 'needs-attention'
   source: string
+  citations?: Array<{
+    source: string
+    snippet: string
+    score: number
+  }>
 }
 
 export type UserProfile = {
@@ -29,6 +35,13 @@ export type Workspace = {
   id: string
   name: string
   role: string
+  plan?: 'free' | 'pro' | 'team'
+  tenderUsage?: {
+    month: string
+    used: number
+    limit: number | null
+    remaining: number | null
+  }
 }
 
 function authHeaders(token: string) {
@@ -137,11 +150,22 @@ export async function generateDraft(
   token: string,
   workspaceId: string,
   questions: string[],
-): Promise<{ workspaceId: string; draft: DraftQuestion[] }> {
+  useLastQuarter = false,
+): Promise<{
+  workspaceId: string
+  draft: DraftQuestion[]
+  plan?: 'free' | 'pro' | 'team'
+  tenderUsage?: {
+    month: string
+    used: number
+    limit: number | null
+    remaining: number | null
+  }
+}> {
   const response = await fetch(`${API_BASE_URL}/api/tender/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
-    body: JSON.stringify({ workspaceId, questions }),
+    body: JSON.stringify({ workspaceId, questions, useLastQuarter }),
   })
 
   return handleResponse(response)
@@ -165,4 +189,113 @@ export async function exportDraft(
   }
 
   return response.blob()
+}
+
+export async function exportFilledExcel(
+  token: string,
+  workspaceId: string,
+  originalTenderFile: File,
+  draft: DraftQuestion[],
+): Promise<Blob> {
+  const formData = new FormData()
+  formData.append('workspaceId', workspaceId)
+  formData.append('file', originalTenderFile)
+  formData.append('draft', JSON.stringify(draft))
+
+  const response = await fetch(`${API_BASE_URL}/api/tender/export-filled`, {
+    method: 'POST',
+    headers: { ...authHeaders(token) },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const data = await response.json()
+    throw new Error(data.error || 'Filled excel export failed.')
+  }
+
+  return response.blob()
+}
+
+export async function exportPortalFormat(
+  token: string,
+  workspaceId: string,
+  draft: DraftQuestion[],
+  format: 'json' | 'xml',
+  platform: 'coupa' | 'ariba' | 'jaggaer' | 'generic',
+): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/tender/export-portal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ workspaceId, draft, format, platform }),
+  })
+
+  if (!response.ok) {
+    const data = await response.json()
+    throw new Error(data.error || 'Portal export failed.')
+  }
+
+  if (format === 'json') {
+    const payload = await response.json()
+    return new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  }
+
+  return response.blob()
+}
+
+export async function askClarifyingQuestions(
+  token: string,
+  workspaceId: string,
+  draft: DraftQuestion[],
+): Promise<{ clarifications: string[] }> {
+  const response = await fetch(`${API_BASE_URL}/api/tender/clarify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ workspaceId, draft }),
+  })
+
+  return handleResponse(response)
+}
+
+export async function getIndiaTemplates(
+  token: string,
+): Promise<{ templates: Array<{ id: string; title: string; body: string }> }> {
+  const response = await fetch(`${API_BASE_URL}/api/templates/india`, {
+    headers: { ...authHeaders(token) },
+  })
+
+  return handleResponse(response)
+}
+
+export async function getWorkspaceUsage(
+  token: string,
+  workspaceId: string,
+): Promise<{
+  workspaceId: string
+  plan: 'free' | 'pro' | 'team'
+  tenderUsage: { month: string; used: number; limit: number | null; remaining: number | null }
+  features: { filledExcelExport: boolean }
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/workspaces/${workspaceId}/usage`, {
+    headers: { ...authHeaders(token) },
+  })
+
+  return handleResponse(response)
+}
+
+export async function updateWorkspacePlan(
+  token: string,
+  workspaceId: string,
+  plan: 'free' | 'pro' | 'team',
+): Promise<{
+  workspaceId: string
+  plan: 'free' | 'pro' | 'team'
+  tenderUsage: { month: string; used: number; limit: number | null; remaining: number | null }
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/workspaces/${workspaceId}/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ plan }),
+  })
+
+  return handleResponse(response)
 }

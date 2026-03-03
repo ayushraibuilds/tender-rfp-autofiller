@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>TenderPilot Filler</title>
+    <style>
+      body { font-family: Arial, sans-serif; width: 320px; margin: 12px; }
+      textarea { width: 100%; min-height: 150px; }
+      button { margin-top: 8px; width: 100%; }
+      small { color: #555; display: block; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <h3>TenderPilot Portal Filler</h3>
+    <textarea id="draftJson" placeholder='Paste draft JSON: {"draft":[{"question":"...","answer":"..."}]}'></textarea>
+    <button id="fillBtn">Fill Current Page</button>
+    <small id="status"></small>
+    <script src="popup.js"></script>
+  </body>
+</html>

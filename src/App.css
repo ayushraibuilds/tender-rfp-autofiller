@@ -178,6 +178,7 @@ nav {
 .review-actions {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .grid-cards {
@@ -262,6 +263,29 @@ button:disabled {
   border: 1px solid #bfe5df;
 }
 
+.secondary.active {
+  background: #0f766e;
+  color: #f6fffd;
+  border-color: #0f766e;
+}
+
+.plan-strip {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fffdf6;
+}
+
+.plan-buttons {
+  display: flex;
+  gap: 0.45rem;
+}
+
 .stats-row {
   margin-top: 1.2rem;
   display: grid;
@@ -334,6 +358,21 @@ button:disabled {
   color: #9a4104;
 }
 
+.chip.trust.green {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.chip.trust.yellow {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.chip.trust.red {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .single-card {
   max-width: 640px;
 }
@@ -359,6 +398,39 @@ button:disabled {
 
 .qa-grid p {
   margin: 0;
+}
+
+.qa-grid textarea {
+  min-height: 120px;
+}
+
+.templates-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+}
+
+.plain-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.plain-list p {
+  margin: 0.2rem 0 0;
+  color: #374151;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.toggle-row input {
+  width: auto;
 }
 
 .confidence-wrap {
@@ -417,6 +489,10 @@ button:disabled {
   .workspace-controls {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .plan-buttons {
+    width: 100%;
   }
 
   .review-actions,
