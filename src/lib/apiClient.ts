@@ -2,7 +2,9 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787
 
 export type IndexedFileResult = {
   fileName: string
+  sourcePath?: string
   status: 'indexed' | 'failed'
+  version?: number
   chunkCount?: number
   extractedChars?: number
   error?: string
@@ -100,6 +102,8 @@ export async function indexKnowledgeFiles(
 
   Array.from(files).forEach((file) => {
     formData.append('files', file)
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath
+    formData.append('sourcePath', relativePath && relativePath.length > 0 ? relativePath : file.name)
   })
 
   const response = await fetch(`${API_BASE_URL}/api/knowledge/index`, {
@@ -141,4 +145,24 @@ export async function generateDraft(
   })
 
   return handleResponse(response)
+}
+
+export async function exportDraft(
+  token: string,
+  workspaceId: string,
+  draft: DraftQuestion[],
+  format: 'xlsx' | 'pdf',
+): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/tender/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
+    body: JSON.stringify({ workspaceId, draft, format }),
+  })
+
+  if (!response.ok) {
+    const data = await response.json()
+    throw new Error(data.error || 'Export failed.')
+  }
+
+  return response.blob()
 }

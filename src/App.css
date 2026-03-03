@@ -139,6 +139,21 @@ nav {
   max-width: 210px;
 }
 
+.dropzone {
+  border: 1.5px dashed #8db7b1;
+  border-radius: 0.75rem;
+  padding: 0.7rem;
+  background: #f4fbf9;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dropzone p {
+  margin: 0;
+  color: #2d5954;
+  font-size: 0.88rem;
+}
+
 .error-banner {
   background: #fff1f0;
   border: 1px solid #efc3c0;
@@ -158,6 +173,11 @@ nav {
 .header-row p {
   margin-top: 0.35rem;
   color: var(--muted);
+}
+
+.review-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .grid-cards {
@@ -324,6 +344,37 @@ button:disabled {
   gap: 0.9rem;
 }
 
+.qa-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+  margin-top: 0.6rem;
+}
+
+.qa-grid h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.86rem;
+  color: #36554b;
+}
+
+.qa-grid p {
+  margin: 0;
+}
+
+.confidence-wrap {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: #e3ece8;
+  overflow: hidden;
+  margin-top: 0.8rem;
+}
+
+.confidence-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #edb449, #0f766e);
+}
+
 .question-head {
   display: flex;
   justify-content: space-between;
@@ -366,6 +417,12 @@ button:disabled {
   .workspace-controls {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .review-actions,
+  .qa-grid {
+    grid-template-columns: 1fr;
+    display: grid;
   }
 
   .workspace-controls select,

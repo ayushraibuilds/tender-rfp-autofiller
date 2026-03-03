@@ -2,6 +2,9 @@ import OpenAI from 'openai'
 
 const EMBEDDING_MODEL = 'text-embedding-3-small'
 const FALLBACK_DIMENSIONS = 256
+const EMBEDDING_PROVIDER = (process.env.EMBEDDING_PROVIDER || 'ollama').toLowerCase()
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434'
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2'
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -50,16 +53,42 @@ export async function embedTexts(texts) {
     return []
   }
 
-  if (!openai) {
-    return sanitized.map((text) => fallbackEmbedOne(text))
+  if (EMBEDDING_PROVIDER === 'openai') {
+    if (!openai) {
+      throw new Error('OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai')
+    }
+
+    const response = await openai.embeddings.create({
+      model: EMBEDDING_MODEL,
+      input: sanitized,
+    })
+
+    return response.data.map((item) => item.embedding)
   }
 
-  const response = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: sanitized,
-  })
+  if (EMBEDDING_PROVIDER === 'ollama') {
+    try {
+      const embeddings = await Promise.all(
+        sanitized.map(async (value) => {
+          const response = await fetch(`${OLLAMA_BASE_URL}/api/embeddings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: OLLAMA_MODEL, prompt: value }),
+          })
+          if (!response.ok) {
+            throw new Error(`Ollama embeddings request failed (${response.status})`)
+          }
+          const data = await response.json()
+          return data.embedding
+        }),
+      )
+      return embeddings
+    } catch {
+      return sanitized.map((text) => fallbackEmbedOne(text))
+    }
+  }
 
-  return response.data.map((item) => item.embedding)
+  return sanitized.map((text) => fallbackEmbedOne(text))
 }
 
 export function cosineSimilarity(a, b) {
@@ -85,5 +114,15 @@ export function cosineSimilarity(a, b) {
 }
 
 export function isUsingOpenAIEmbeddings() {
-  return Boolean(openai)
+  return EMBEDDING_PROVIDER === 'openai' && Boolean(openai)
+}
+
+export function getEmbeddingBackendLabel() {
+  if (EMBEDDING_PROVIDER === 'openai') {
+    return 'openai'
+  }
+  if (EMBEDDING_PROVIDER === 'ollama') {
+    return `ollama:${OLLAMA_MODEL}`
+  }
+  return 'fallback-hash'
 }

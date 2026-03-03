@@ -1,7 +1,13 @@
 import jwt from 'jsonwebtoken'
 import { getDb } from './db.js'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret-change-me'
+const DEFAULT_JWT_SECRET = 'dev-only-secret-change-me'
+const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_JWT_SECRET
+const NODE_ENV = process.env.NODE_ENV || 'development'
+
+if (NODE_ENV === 'production' && JWT_SECRET === DEFAULT_JWT_SECRET) {
+  throw new Error('JWT_SECRET must be set in production.')
+}
 
 export function signAccessToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' })

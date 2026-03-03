@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type DragEvent } from 'react'
 import './App.css'
 import {
   createWorkspace,
+  exportDraft,
   generateDraft,
   getMe,
   indexKnowledgeFiles,
@@ -20,9 +21,11 @@ type ParseStatus = 'indexed' | 'failed'
 type UploadedDoc = {
   id: string
   name: string
+  sourcePath?: string
   sizeLabel: string
   addedAt: string
   parseStatus: ParseStatus
+  version?: number
   parseError?: string
   chunkCount?: number
 }
@@ -78,6 +81,7 @@ function App() {
   const [isIndexingKnowledge, setIsIndexingKnowledge] = useState(false)
   const [isParsingTender, setIsParsingTender] = useState(false)
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false)
+  const [isExportingDraft, setIsExportingDraft] = useState(false)
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false)
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
@@ -142,6 +146,16 @@ function App() {
     setTenderQuestions([])
     setDraft([])
     setKnowledgeNotes('')
+  }
+
+  const handleDropKnowledge = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    void addKnowledgeDocs(event.dataTransfer.files)
+  }
+
+  const handleDropTender = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    void setTenderFile(event.dataTransfer.files)
   }
 
   const persistSession = (sessionToken: string, profile: UserProfile, nextWorkspaces: Workspace[]) => {
@@ -225,9 +239,11 @@ function App() {
         return {
           id: `${item.fileName}-${Math.random().toString(36).slice(2)}`,
           name: item.fileName,
+          sourcePath: item.sourcePath,
           sizeLabel: originalFile ? formatBytes(originalFile.size) : 'Unknown size',
           addedAt: uploadedAt,
           parseStatus: item.status,
+          version: item.version,
           parseError: item.error,
           chunkCount: item.chunkCount,
         }
@@ -290,6 +306,30 @@ function App() {
       setErrorMessage(error instanceof Error ? error.message : 'Failed to generate draft.')
     } finally {
       setIsGeneratingDraft(false)
+    }
+  }
+
+  const handleExportDraft = async (format: 'xlsx' | 'pdf') => {
+    if (!token || !selectedWorkspaceId || draft.length === 0) {
+      return
+    }
+
+    setErrorMessage('')
+    setIsExportingDraft(true)
+    try {
+      const blob = await exportDraft(token, selectedWorkspaceId, draft, format)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = format === 'pdf' ? 'tender-draft.pdf' : 'tender-draft.xlsx'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Export failed.')
+    } finally {
+      setIsExportingDraft(false)
     }
   }
 
@@ -461,14 +501,29 @@ function App() {
               <article className="card">
                 <h3>Step 2: Upload Winning Proposals</h3>
                 <p>{knowledgeDocs.length} files uploaded</p>
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx,.txt"
-                  multiple
-                  onChange={(event) => {
-                    void addKnowledgeDocs(event.target.files)
-                  }}
-                />
+                <div
+                  className="dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={handleDropKnowledge}
+                >
+                  <p>Drag and drop files/folders here, or browse.</p>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.xlsx,.txt"
+                    multiple
+                    onChange={(event) => {
+                      void addKnowledgeDocs(event.target.files)
+                    }}
+                  />
+                  <input
+                    type="file"
+                    multiple
+                    {...({ webkitdirectory: 'true', directory: 'true' } as Record<string, string>)}
+                    onChange={(event) => {
+                      void addKnowledgeDocs(event.target.files)
+                    }}
+                  />
+                </div>
                 {isIndexingKnowledge && <small>Indexing documents in vector store...</small>}
                 <button
                   type="button"
@@ -482,13 +537,20 @@ function App() {
               <article className="card">
                 <h3>Step 3: Upload New Tender</h3>
                 <p>{tenderDoc ? tenderDoc.name : 'No tender selected yet'}</p>
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx"
-                  onChange={(event) => {
-                    void setTenderFile(event.target.files)
-                  }}
-                />
+                <div
+                  className="dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={handleDropTender}
+                >
+                  <p>Drag and drop the tender file, or browse.</p>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.xlsx"
+                    onChange={(event) => {
+                      void setTenderFile(event.target.files)
+                    }}
+                  />
+                </div>
                 {isParsingTender && <small>Parsing tender file...</small>}
                 {tenderDoc?.parseStatus === 'failed' && (
                   <small>Could not parse this file: {tenderDoc.parseError}</small>
@@ -541,14 +603,29 @@ function App() {
             <div className="grid-cards two-col">
               <article className="card">
                 <h3>Add Documents</h3>
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.doc,.docx,.txt"
-                  onChange={(event) => {
-                    void addKnowledgeDocs(event.target.files)
-                  }}
-                />
+                <div
+                  className="dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={handleDropKnowledge}
+                >
+                  <p>Drop PDF, DOCX, XLSX, TXT files or whole folders.</p>
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.doc,.docx,.xlsx,.txt"
+                    onChange={(event) => {
+                      void addKnowledgeDocs(event.target.files)
+                    }}
+                  />
+                  <input
+                    type="file"
+                    multiple
+                    {...({ webkitdirectory: 'true', directory: 'true' } as Record<string, string>)}
+                    onChange={(event) => {
+                      void addKnowledgeDocs(event.target.files)
+                    }}
+                  />
+                </div>
                 {isIndexingKnowledge && <small>Indexing documents in vector store...</small>}
                 <label>
                   Quick notes (local)
@@ -576,6 +653,8 @@ function App() {
                           <small>
                             {doc.sizeLabel} • Added {doc.addedAt}
                           </small>
+                          {doc.sourcePath ? <small>Path: {doc.sourcePath}</small> : null}
+                          {doc.version ? <small>Version: v{doc.version}</small> : null}
                           {doc.chunkCount ? <small>Chunks indexed: {doc.chunkCount}</small> : null}
                           {doc.parseError && <small>{doc.parseError}</small>}
                         </div>
@@ -606,13 +685,20 @@ function App() {
 
             <article className="card single-card">
               <h3>Tender File</h3>
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx"
-                onChange={(event) => {
-                  void setTenderFile(event.target.files)
-                }}
-              />
+              <div
+                className="dropzone"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={handleDropTender}
+              >
+                <p>Drop tender PDF/DOCX/XLSX here.</p>
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xlsx"
+                  onChange={(event) => {
+                    void setTenderFile(event.target.files)
+                  }}
+                />
+              </div>
               <p>{tenderDoc ? `${tenderDoc.name} (${tenderDoc.sizeLabel})` : 'No file selected'}</p>
               {isParsingTender && <small>Parsing tender file...</small>}
               {tenderDoc?.parseStatus === 'indexed' && (
@@ -651,6 +737,24 @@ function App() {
                   only items marked "Needs Attention".
                 </p>
               </div>
+              <div className="review-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => void handleExportDraft('xlsx')}
+                  disabled={isExportingDraft || draft.length === 0}
+                >
+                  Export XLSX
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => void handleExportDraft('pdf')}
+                  disabled={isExportingDraft || draft.length === 0}
+                >
+                  Export PDF
+                </button>
+              </div>
             </header>
 
             {draft.length === 0 ? (
@@ -663,7 +767,7 @@ function App() {
                 {draft.map((item) => (
                   <article className="card" key={item.id}>
                     <div className="question-head">
-                      <h3>{item.question}</h3>
+                      <h3>Q: {item.question}</h3>
                       <span
                         className={
                           item.status === 'ready' ? 'chip ready' : 'chip attention'
@@ -672,7 +776,22 @@ function App() {
                         {item.status === 'ready' ? 'Ready' : 'Needs Attention'}
                       </span>
                     </div>
-                    <p>{item.answer}</p>
+                    <div className="qa-grid">
+                      <div>
+                        <h4>Original Question</h4>
+                        <p>{item.question}</p>
+                      </div>
+                      <div>
+                        <h4>AI Draft Answer</h4>
+                        <p>{item.answer}</p>
+                      </div>
+                    </div>
+                    <div className="confidence-wrap" aria-label="confidence">
+                      <div
+                        className="confidence-bar"
+                        style={{ width: `${Math.round(item.confidence * 100)}%` }}
+                      />
+                    </div>
                     <footer className="meta-row">
                       <small>Confidence: {Math.round(item.confidence * 100)}%</small>
                       <small>Source: {item.source}</small>
