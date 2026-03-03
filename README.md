@@ -1,73 +1,64 @@
-# React + TypeScript + Vite
+# TenderPilot AI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Tender/RFP auto-filler for agencies, construction teams, and IT service companies.
 
-Currently, two official plugins are available:
+## What is implemented
+- Frontend: contractor-friendly workflow for setup, knowledge upload, tender upload, and draft review.
+- Backend: Express API with document parsing, chunking, embeddings, and vector retrieval.
+- Auth: JWT-based register/login with workspace membership checks.
+- Storage: SQLite database persisted at `server/data/knowledge.db`.
+- Retrieval pipeline: knowledge files are parsed and indexed; tender questions retrieve top matching chunks to draft answers.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Tech stack
+- Frontend: React + Vite + TypeScript
+- Backend: Node.js + Express
+- Parsing: `pdf-parse`, `mammoth`
+- Vector search: OpenAI embeddings (`text-embedding-3-small`) or local hash-vector fallback
+- Database: SQLite (`sqlite3` + `sqlite`)
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Setup
+1. Install dependencies:
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2. Configure environment:
+```bash
+cp .env.example .env
+```
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+3. (Optional, recommended) add OpenAI key in `.env` for higher-quality embeddings:
+```bash
+OPENAI_API_KEY=your_key_here
+```
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Run
+- Run frontend + backend together:
+```bash
+npm run dev:full
+```
+
+- Or separately:
+```bash
+npm run server
+npm run dev
+```
+
+Frontend: `http://localhost:5173`  
+Backend: `http://localhost:8787`
+
+## API endpoints
+- `GET /api/health`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+- `POST /api/workspaces`
+- `POST /api/knowledge/index` (`multipart/form-data`, fields: `workspaceId`, `files[]`, requires auth)
+- `POST /api/retrieve` (`workspaceId`, `query`, `topK`, requires auth)
+- `POST /api/tender/parse` (`multipart/form-data`, fields: `workspaceId`, `file`, requires auth)
+- `POST /api/tender/draft` (`workspaceId`, `questions[]`, requires auth)
+
+## Build
+```bash
+npm run build
 ```

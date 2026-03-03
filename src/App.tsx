@@ -1,124 +1,130 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import {
+  createWorkspace,
+  generateDraft,
+  getMe,
+  indexKnowledgeFiles,
+  loginUser,
+  parseTenderFile,
+  registerUser,
+  type DraftQuestion,
+  type UserProfile,
+  type Workspace,
+} from './lib/apiClient'
 
 type Page = 'dashboard' | 'knowledge' | 'tender' | 'review'
+type AuthMode = 'login' | 'register'
+type ParseStatus = 'indexed' | 'failed'
 
 type UploadedDoc = {
   id: string
   name: string
   sizeLabel: string
   addedAt: string
+  parseStatus: ParseStatus
+  parseError?: string
+  chunkCount?: number
 }
 
-type DraftQuestion = {
-  id: string
-  question: string
-  answer: string
-  confidence: number
-  status: 'ready' | 'needs-attention'
-  source: string
-}
+const TOKEN_KEY = 'tenderpilot_token'
 
-const TENDER_QUESTIONS = [
-  { id: 'q1', text: 'Provide company profile and years of experience.' },
-  { id: 'q2', text: 'Describe your information security policy and certifications.' },
-  { id: 'q3', text: 'Share 2 relevant case studies with outcomes and client type.' },
-  { id: 'q4', text: 'Confirm delivery timeline, milestones, and support model.' },
-  { id: 'q5', text: 'State pricing assumptions, payment terms, and validity.' },
-]
-
-const keywordConfig = [
-  {
-    key: 'company profile',
-    match: ['profile', 'about', 'experience', 'years'],
-    answer:
-      'Our company profile and experience summary are aligned with similar bids. We can provide complete legal details, GST information, and team structure in the annexure.',
-    source: 'Company profile library',
-  },
-  {
-    key: 'security',
-    match: ['security', 'iso', 'policy', 'infosec'],
-    answer:
-      'We maintain a documented information security policy, role-based access controls, encrypted data handling, and periodic internal review procedures. Certification details can be attached as required.',
-    source: 'Security policy library',
-  },
-  {
-    key: 'case studies',
-    match: ['case', 'study', 'outcomes', 'client'],
-    answer:
-      'We have delivered comparable projects with measurable outcomes such as reduced turnaround time, better compliance tracking, and improved operational visibility. Detailed references are available upon request.',
-    source: 'Past winning proposals',
-  },
-  {
-    key: 'timeline',
-    match: ['timeline', 'milestone', 'support', 'delivery'],
-    answer:
-      'Our standard approach includes kickoff, requirement validation, phased delivery milestones, UAT, and post-go-live support with clear escalation paths.',
-    source: 'Delivery framework docs',
-  },
-  {
-    key: 'pricing',
-    match: ['pricing', 'payment', 'terms', 'validity'],
-    answer:
-      'Commercial terms are provided as milestone-based pricing with clear assumptions, invoicing schedule, and proposal validity period as per tender format.',
-    source: 'Commercial templates',
-  },
+const FALLBACK_TENDER_QUESTIONS = [
+  'Provide company profile and years of experience.',
+  'Describe your information security policy and certifications.',
+  'Share 2 relevant case studies with outcomes and client type.',
+  'Confirm delivery timeline, milestones, and support model.',
+  'State pricing assumptions, payment terms, and validity.',
 ]
 
 function formatBytes(size: number): string {
   if (size < 1024) {
     return `${size} B`
   }
+
   const units = ['KB', 'MB', 'GB']
   let value = size / 1024
   let unitIndex = 0
+
   while (value >= 1024 && unitIndex < units.length - 1) {
     value /= 1024
     unitIndex += 1
   }
+
   return `${value.toFixed(1)} ${units[unitIndex]}`
 }
 
-function buildDraft(knowledgeText: string): DraftQuestion[] {
-  const corpus = knowledgeText.toLowerCase()
-
-  return TENDER_QUESTIONS.map((item) => {
-    const matchedConfig = keywordConfig.find((config) =>
-      config.match.some((token) => item.text.toLowerCase().includes(token)),
-    )
-
-    const isQuestionCovered = matchedConfig?.match.some((token) =>
-      corpus.includes(token),
-    )
-
-    const confidence = isQuestionCovered ? 0.86 : 0.41
-
-    return {
-      id: item.id,
-      question: item.text,
-      answer: isQuestionCovered
-        ? matchedConfig?.answer ??
-          'Drafted from your historical knowledge base. Please review final wording.'
-        : 'New question detected. Add specific project context, exact numbers, and supporting evidence before submission.',
-      confidence,
-      status: confidence >= 0.75 ? 'ready' : 'needs-attention',
-      source: isQuestionCovered
-        ? matchedConfig?.source ?? 'Knowledge base'
-        : 'No strong match found',
-    }
-  })
-}
-
 function App() {
+  const [token, setToken] = useState<string | null>(null)
+  const [user, setUser] = useState<UserProfile | null>(null)
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('')
+
+  const [authMode, setAuthMode] = useState<AuthMode>('login')
+  const [authName, setAuthName] = useState('')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authWorkspaceName, setAuthWorkspaceName] = useState('')
+  const [isAuthenticating, setIsAuthenticating] = useState(false)
+  const [isLoadingSession, setIsLoadingSession] = useState(true)
+
   const [page, setPage] = useState<Page>('dashboard')
-  const [companyName, setCompanyName] = useState('')
   const [industry, setIndustry] = useState('IT Services')
   const [knowledgeNotes, setKnowledgeNotes] = useState('')
   const [knowledgeDocs, setKnowledgeDocs] = useState<UploadedDoc[]>([])
   const [tenderDoc, setTenderDoc] = useState<UploadedDoc | null>(null)
+  const [tenderQuestions, setTenderQuestions] = useState<string[]>([])
   const [draft, setDraft] = useState<DraftQuestion[]>([])
+  const [isIndexingKnowledge, setIsIndexingKnowledge] = useState(false)
+  const [isParsingTender, setIsParsingTender] = useState(false)
+  const [isGeneratingDraft, setIsGeneratingDraft] = useState(false)
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false)
+  const [newWorkspaceName, setNewWorkspaceName] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
 
-  const onboardingDone = companyName.trim().length > 0 && knowledgeDocs.length > 0
+  useEffect(() => {
+    const bootstrap = async () => {
+      const storedToken = localStorage.getItem(TOKEN_KEY)
+      if (!storedToken) {
+        setIsLoadingSession(false)
+        return
+      }
+
+      try {
+        const me = await getMe(storedToken)
+        setToken(storedToken)
+        setUser(me.user)
+        setWorkspaces(me.workspaces)
+        setSelectedWorkspaceId(me.workspaces[0]?.id || '')
+      } catch {
+        localStorage.removeItem(TOKEN_KEY)
+      } finally {
+        setIsLoadingSession(false)
+      }
+    }
+
+    void bootstrap()
+  }, [])
+
+  useEffect(() => {
+    if (!selectedWorkspaceId && workspaces.length > 0) {
+      setSelectedWorkspaceId(workspaces[0].id)
+    }
+  }, [selectedWorkspaceId, workspaces])
+
+  const selectedWorkspace = useMemo(
+    () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) || null,
+    [workspaces, selectedWorkspaceId],
+  )
+
+  const indexedKnowledgeCount = knowledgeDocs.filter(
+    (doc) => doc.parseStatus === 'indexed',
+  ).length
+  const failedKnowledgeCount = knowledgeDocs.filter(
+    (doc) => doc.parseStatus === 'failed',
+  ).length
+
+  const onboardingDone = Boolean(selectedWorkspaceId) && indexedKnowledgeCount > 0
 
   const readyCount = draft.filter((item) => item.status === 'ready').length
   const needsAttentionCount = draft.filter((item) => item.status === 'needs-attention').length
@@ -130,44 +136,239 @@ function App() {
     { id: 'review', label: 'AI Draft Review' },
   ]
 
-  const knowledgeCorpus = useMemo(() => {
-    const docNames = knowledgeDocs.map((doc) => doc.name).join(' ')
-    return `${docNames} ${knowledgeNotes}`
-  }, [knowledgeDocs, knowledgeNotes])
-
-  const addKnowledgeDocs = (files: FileList | null): void => {
-    if (!files) {
-      return
-    }
-    const nextDocs = Array.from(files).map((file) => ({
-      id: `${file.name}-${file.lastModified}`,
-      name: file.name,
-      sizeLabel: formatBytes(file.size),
-      addedAt: new Date().toLocaleDateString(),
-    }))
-    setKnowledgeDocs((prev) => [...prev, ...nextDocs])
+  const clearWorkspaceData = () => {
+    setKnowledgeDocs([])
+    setTenderDoc(null)
+    setTenderQuestions([])
+    setDraft([])
+    setKnowledgeNotes('')
   }
 
-  const setTenderFile = (files: FileList | null): void => {
+  const persistSession = (sessionToken: string, profile: UserProfile, nextWorkspaces: Workspace[]) => {
+    localStorage.setItem(TOKEN_KEY, sessionToken)
+    setToken(sessionToken)
+    setUser(profile)
+    setWorkspaces(nextWorkspaces)
+    setSelectedWorkspaceId(nextWorkspaces[0]?.id || '')
+    clearWorkspaceData()
+  }
+
+  const handleAuth = async () => {
+    setErrorMessage('')
+    setIsAuthenticating(true)
+
+    try {
+      if (authMode === 'login') {
+        const result = await loginUser({ email: authEmail, password: authPassword })
+        persistSession(result.token, result.user, result.workspaces)
+      } else {
+        const result = await registerUser({
+          name: authName,
+          email: authEmail,
+          password: authPassword,
+          workspaceName: authWorkspaceName,
+        })
+        persistSession(result.token, result.user, result.workspaces)
+      }
+      setAuthPassword('')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Authentication failed.')
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
+  const handleCreateWorkspace = async () => {
+    if (!token || !newWorkspaceName.trim()) {
+      return
+    }
+
+    setErrorMessage('')
+    setIsCreatingWorkspace(true)
+
+    try {
+      const result = await createWorkspace(token, newWorkspaceName)
+      const nextWorkspaces = [result.workspace, ...workspaces]
+      setWorkspaces(nextWorkspaces)
+      setSelectedWorkspaceId(result.workspace.id)
+      setNewWorkspaceName('')
+      clearWorkspaceData()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Could not create workspace.')
+    } finally {
+      setIsCreatingWorkspace(false)
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem(TOKEN_KEY)
+    setToken(null)
+    setUser(null)
+    setWorkspaces([])
+    setSelectedWorkspaceId('')
+    clearWorkspaceData()
+  }
+
+  const addKnowledgeDocs = async (files: FileList | null): Promise<void> => {
+    if (!token || !selectedWorkspaceId || !files || files.length === 0) {
+      return
+    }
+
+    setErrorMessage('')
+    setIsIndexingKnowledge(true)
+
+    try {
+      const result = await indexKnowledgeFiles(token, selectedWorkspaceId, files)
+      const uploadedAt = new Date().toLocaleDateString()
+      const docs: UploadedDoc[] = result.files.map((item) => {
+        const originalFile = Array.from(files).find((file) => file.name === item.fileName)
+        return {
+          id: `${item.fileName}-${Math.random().toString(36).slice(2)}`,
+          name: item.fileName,
+          sizeLabel: originalFile ? formatBytes(originalFile.size) : 'Unknown size',
+          addedAt: uploadedAt,
+          parseStatus: item.status,
+          parseError: item.error,
+          chunkCount: item.chunkCount,
+        }
+      })
+
+      setKnowledgeDocs((prev) => [...prev, ...docs])
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Could not index knowledge files.')
+    } finally {
+      setIsIndexingKnowledge(false)
+    }
+  }
+
+  const setTenderFile = async (files: FileList | null): Promise<void> => {
     const file = files?.[0]
-    if (!file) {
+    if (!token || !selectedWorkspaceId || !file) {
       return
     }
-    setTenderDoc({
+
+    setErrorMessage('')
+    setIsParsingTender(true)
+
+    const base = {
       id: `${file.name}-${file.lastModified}`,
       name: file.name,
       sizeLabel: formatBytes(file.size),
       addedAt: new Date().toLocaleDateString(),
-    })
+    }
+
+    try {
+      const parsed = await parseTenderFile(token, selectedWorkspaceId, file)
+      setTenderDoc({ ...base, parseStatus: 'indexed' })
+      setTenderQuestions(
+        parsed.questions.length > 0 ? parsed.questions : FALLBACK_TENDER_QUESTIONS,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Parsing failed.'
+      setTenderDoc({ ...base, parseStatus: 'failed', parseError: message })
+      setTenderQuestions([])
+      setErrorMessage(message)
+    } finally {
+      setIsParsingTender(false)
+    }
   }
 
-  const runAutofill = (): void => {
-    if (!tenderDoc) {
+  const runAutofill = async (): Promise<void> => {
+    if (!token || !selectedWorkspaceId || !tenderDoc || tenderDoc.parseStatus === 'failed') {
       return
     }
-    const result = buildDraft(knowledgeCorpus)
-    setDraft(result)
-    setPage('review')
+
+    setErrorMessage('')
+    setIsGeneratingDraft(true)
+
+    try {
+      const questions = tenderQuestions.length > 0 ? tenderQuestions : FALLBACK_TENDER_QUESTIONS
+      const result = await generateDraft(token, selectedWorkspaceId, questions)
+      setDraft(result.draft)
+      setPage('review')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to generate draft.')
+    } finally {
+      setIsGeneratingDraft(false)
+    }
+  }
+
+  if (isLoadingSession) {
+    return <main className="auth-shell">Loading workspace...</main>
+  }
+
+  if (!token || !user) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <h1>TenderPilot AI</h1>
+          <p>Secure workspace login for your bidding team.</p>
+
+          {errorMessage && <p className="error-banner">{errorMessage}</p>}
+
+          <div className="auth-tabs">
+            <button
+              type="button"
+              className={authMode === 'login' ? 'nav-item active' : 'nav-item'}
+              onClick={() => setAuthMode('login')}
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              className={authMode === 'register' ? 'nav-item active' : 'nav-item'}
+              onClick={() => setAuthMode('register')}
+            >
+              Register
+            </button>
+          </div>
+
+          {authMode === 'register' && (
+            <label>
+              Full name
+              <input value={authName} onChange={(event) => setAuthName(event.target.value)} />
+            </label>
+          )}
+
+          <label>
+            Email
+            <input
+              type="email"
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+            />
+          </label>
+
+          {authMode === 'register' && (
+            <label>
+              First workspace name
+              <input
+                placeholder="Example: Acme Bidding Team"
+                value={authWorkspaceName}
+                onChange={(event) => setAuthWorkspaceName(event.target.value)}
+              />
+            </label>
+          )}
+
+          <button type="button" className="primary" onClick={() => void handleAuth()}>
+            {isAuthenticating
+              ? 'Please wait...'
+              : authMode === 'login'
+                ? 'Login'
+                : 'Create Account'}
+          </button>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -190,26 +391,58 @@ function App() {
       </aside>
 
       <main className="main-content">
+        <header className="topbar">
+          <div>
+            <strong>{user.name}</strong>
+            <small>{user.email}</small>
+          </div>
+          <div className="workspace-controls">
+            <select
+              value={selectedWorkspaceId}
+              onChange={(event) => {
+                setSelectedWorkspaceId(event.target.value)
+                clearWorkspaceData()
+              }}
+            >
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
+            <input
+              placeholder="New workspace"
+              value={newWorkspaceName}
+              onChange={(event) => setNewWorkspaceName(event.target.value)}
+            />
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => void handleCreateWorkspace()}
+              disabled={isCreatingWorkspace}
+            >
+              {isCreatingWorkspace ? 'Creating...' : 'Create'}
+            </button>
+            <button type="button" className="secondary" onClick={handleLogout}>
+              Logout
+            </button>
+          </div>
+        </header>
+
+        {errorMessage && <p className="error-banner">{errorMessage}</p>}
+
         {page === 'dashboard' && (
           <section>
             <header className="header-row">
               <div>
-                <h2>Welcome{companyName ? `, ${companyName}` : ''}</h2>
-                <p>Complete the 3-step setup, then let AI draft your next tender response.</p>
+                <h2>{selectedWorkspace?.name || 'Workspace'}</h2>
+                <p>Upload knowledge, parse tender docs, and draft responses securely.</p>
               </div>
             </header>
 
             <div className="grid-cards">
               <article className="card">
-                <h3>Step 1: Company Setup</h3>
-                <label>
-                  Company name
-                  <input
-                    placeholder="Enter your company"
-                    value={companyName}
-                    onChange={(event) => setCompanyName(event.target.value)}
-                  />
-                </label>
+                <h3>Step 1: Workspace Profile</h3>
                 <label>
                   Industry
                   <select
@@ -222,6 +455,7 @@ function App() {
                     <option>Other</option>
                   </select>
                 </label>
+                <small>All data is isolated to this selected workspace.</small>
               </article>
 
               <article className="card">
@@ -231,8 +465,11 @@ function App() {
                   type="file"
                   accept=".pdf,.doc,.docx,.txt"
                   multiple
-                  onChange={(event) => addKnowledgeDocs(event.target.files)}
+                  onChange={(event) => {
+                    void addKnowledgeDocs(event.target.files)
+                  }}
                 />
+                {isIndexingKnowledge && <small>Indexing documents in vector store...</small>}
                 <button
                   type="button"
                   className="secondary"
@@ -248,23 +485,37 @@ function App() {
                 <input
                   type="file"
                   accept=".pdf,.doc,.docx"
-                  onChange={(event) => setTenderFile(event.target.files)}
+                  onChange={(event) => {
+                    void setTenderFile(event.target.files)
+                  }}
                 />
+                {isParsingTender && <small>Parsing tender file...</small>}
+                {tenderDoc?.parseStatus === 'failed' && (
+                  <small>Could not parse this file: {tenderDoc.parseError}</small>
+                )}
                 <button
                   type="button"
                   className="primary"
-                  onClick={runAutofill}
-                  disabled={!onboardingDone || !tenderDoc}
+                  onClick={() => {
+                    void runAutofill()
+                  }}
+                  disabled={
+                    !onboardingDone ||
+                    !tenderDoc ||
+                    tenderDoc.parseStatus === 'failed' ||
+                    isParsingTender ||
+                    isGeneratingDraft
+                  }
                 >
-                  Generate AI Draft
+                  {isGeneratingDraft ? 'Generating Draft...' : 'Generate AI Draft'}
                 </button>
               </article>
             </div>
 
             <section className="stats-row">
               <article className="stat">
-                <h4>Knowledge Files</h4>
-                <p>{knowledgeDocs.length}</p>
+                <h4>Indexed Knowledge Files</h4>
+                <p>{indexedKnowledgeCount}</p>
               </article>
               <article className="stat">
                 <h4>Draft Ready Answers</h4>
@@ -283,7 +534,7 @@ function App() {
             <header className="header-row">
               <div>
                 <h2>Knowledge Base</h2>
-                <p>Upload old winning proposals and policy documents once. Reuse forever.</p>
+                <p>Upload winning proposals once per workspace. Reuse forever.</p>
               </div>
             </header>
 
@@ -294,12 +545,15 @@ function App() {
                   type="file"
                   multiple
                   accept=".pdf,.doc,.docx,.txt"
-                  onChange={(event) => addKnowledgeDocs(event.target.files)}
+                  onChange={(event) => {
+                    void addKnowledgeDocs(event.target.files)
+                  }}
                 />
+                {isIndexingKnowledge && <small>Indexing documents in vector store...</small>}
                 <label>
-                  Quick notes (optional)
+                  Quick notes (local)
                   <textarea
-                    placeholder="Paste company profile, certifications, key case studies, standard delivery timelines..."
+                    placeholder="Optional notes for your team's context."
                     value={knowledgeNotes}
                     onChange={(event) => setKnowledgeNotes(event.target.value)}
                   />
@@ -308,6 +562,9 @@ function App() {
 
               <article className="card">
                 <h3>Uploaded Library</h3>
+                <p>
+                  Indexed: {indexedKnowledgeCount} | Failed: {failedKnowledgeCount}
+                </p>
                 {knowledgeDocs.length === 0 ? (
                   <p>No files yet. Upload your first winning proposal.</p>
                 ) : (
@@ -319,8 +576,16 @@ function App() {
                           <small>
                             {doc.sizeLabel} • Added {doc.addedAt}
                           </small>
+                          {doc.chunkCount ? <small>Chunks indexed: {doc.chunkCount}</small> : null}
+                          {doc.parseError && <small>{doc.parseError}</small>}
                         </div>
-                        <span className="chip ready">Indexed</span>
+                        <span
+                          className={
+                            doc.parseStatus === 'indexed' ? 'chip ready' : 'chip attention'
+                          }
+                        >
+                          {doc.parseStatus === 'indexed' ? 'Indexed' : 'Parse Failed'}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -344,22 +609,34 @@ function App() {
               <input
                 type="file"
                 accept=".pdf,.doc,.docx"
-                onChange={(event) => setTenderFile(event.target.files)}
+                onChange={(event) => {
+                  void setTenderFile(event.target.files)
+                }}
               />
               <p>{tenderDoc ? `${tenderDoc.name} (${tenderDoc.sizeLabel})` : 'No file selected'}</p>
+              {isParsingTender && <small>Parsing tender file...</small>}
+              {tenderDoc?.parseStatus === 'indexed' && (
+                <small>Parsed questions detected: {tenderQuestions.length}</small>
+              )}
+              {tenderDoc?.parseStatus === 'failed' && (
+                <small>Could not parse this file: {tenderDoc.parseError}</small>
+              )}
               <button
                 type="button"
                 className="primary"
-                onClick={runAutofill}
-                disabled={!onboardingDone || !tenderDoc}
+                onClick={() => {
+                  void runAutofill()
+                }}
+                disabled={
+                  !onboardingDone ||
+                  !tenderDoc ||
+                  tenderDoc.parseStatus === 'failed' ||
+                  isParsingTender ||
+                  isGeneratingDraft
+                }
               >
-                Run AI Auto-Fill
+                {isGeneratingDraft ? 'Generating Draft...' : 'Run AI Auto-Fill'}
               </button>
-              {!onboardingDone && (
-                <small>
-                  Add company name and upload at least one winning proposal before running AI.
-                </small>
-              )}
             </article>
           </section>
         )}
@@ -370,8 +647,8 @@ function App() {
               <div>
                 <h2>AI Draft Review</h2>
                 <p>
-                  Review high-confidence answers quickly. Focus only on questions marked
-                  "Needs Attention".
+                  Answers are generated from retrieved chunks in the selected workspace. Review
+                  only items marked "Needs Attention".
                 </p>
               </div>
             </header>
