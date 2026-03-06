@@ -3,14 +3,14 @@
 Tender/RFP auto-filler for agencies, construction teams, and IT service companies.
 
 ## What is implemented
-- Frontend: contractor-friendly workflow with drag-drop upload, folder upload, side-by-side review, editable answers, trust tags, and export actions.
+- Frontend: launch-ready landing page + contractor-friendly app workflow with drag-drop upload, folder upload, side-by-side review, editable answers, trust tags, and export actions.
 - Backend: Express API with document parsing, transactional indexing, hybrid retrieval (FTS prefilter + vector rerank), and multiple export paths.
 - Auth: JWT-based register/login with workspace membership checks.
 - Workspace isolation: all indexing and retrieval are scoped per workspace.
 - Knowledge versioning: repeated uploads of same source path auto-increment versions.
 - Subscription tiers: Free/Pro/Team plans with tender usage tracking and feature gates.
-- Storage: SQLite database persisted at `server/data/knowledge.db`.
-- Browser extension MVP for portal autofill from draft JSON.
+- Storage: SQLite (default) or Supabase Postgres (`DATABASE_PROVIDER=supabase`).
+- Browser extension MVP for portal autofill with direct backend draft generation.
 
 ## Tech stack
 - Frontend: React + Vite + TypeScript
@@ -31,7 +31,18 @@ npm install
 cp .env.example .env
 ```
 
-3. Choose embeddings backend:
+3. Select database:
+- SQLite local default:
+```bash
+DATABASE_PROVIDER=sqlite
+```
+- Supabase Postgres:
+```bash
+DATABASE_PROVIDER=supabase
+SUPABASE_DB_URL=postgresql://...
+```
+
+4. Choose embeddings backend:
 - Default Groq mode:
 ```bash
 EMBEDDING_PROVIDER=groq
@@ -52,12 +63,12 @@ EMBEDDING_PROVIDER=openai
 OPENAI_API_KEY=your_key_here
 ```
 
-4. Set a strong JWT secret in `.env`:
+5. Set a strong JWT secret in `.env`:
 ```bash
 JWT_SECRET=replace-with-a-strong-random-secret
 ```
 
-5. Production mode safety:
+6. Production mode safety:
 ```bash
 NODE_ENV=production
 ```
@@ -101,11 +112,26 @@ Backend: `http://localhost:8787`
 - Rate limiting is enabled globally (`RATE_LIMIT_MAX` requests per 15 minutes).
 - JWT secret enforcement is enabled for production startup.
 - Indexing writes use DB transactions to prevent partial document/chunk inserts.
-- Retrieval uses SQLite FTS prefiltering before vector similarity reranking.
+- Retrieval uses DB-native prefiltering (SQLite FTS5 or Postgres `to_tsvector`) before vector similarity reranking.
+
+## Supabase migration
+1. Create/open your Supabase project and copy Postgres connection string.
+2. Run schema SQL in Supabase SQL editor:
+   - `server/sql/supabase_schema.sql`
+3. Migrate local SQLite data:
+```bash
+SUPABASE_DB_URL=postgresql://... npm run migrate:supabase
+```
+4. Switch runtime provider:
+```bash
+DATABASE_PROVIDER=supabase
+SUPABASE_DB_URL=postgresql://...
+```
 
 ## Browser extension (MVP)
 - Folder: `extension/`
-- Supports one-click fill of questionnaire forms from TenderPilot draft JSON payload.
+- Supports `Generate + Fill`: collects page questions, calls `/api/tender/draft`, then fills matched fields.
+- Also supports manual JSON paste fallback.
 
 ## Deploy quick path
 - Railway:

@@ -73,6 +73,14 @@ function confidenceBand(confidence: number): 'green' | 'yellow' | 'red' {
   return 'red'
 }
 
+function trustTooltip(item: DraftQuestion): string {
+  const topCitation = item.citations?.[0]
+  if (!topCitation) {
+    return `Confidence ${Math.round(item.confidence * 100)}%. No direct source snippet available.`
+  }
+  return `Confidence ${Math.round(item.confidence * 100)}% from ${topCitation.source}. Evidence: ${topCitation.snippet}`
+}
+
 function App() {
   const [token, setToken] = useState<string | null>(null)
   const [user, setUser] = useState<UserProfile | null>(null)
@@ -521,10 +529,36 @@ function App() {
 
   if (!token || !user) {
     return (
-      <main className="auth-shell">
-        <section className="auth-card">
+      <main className="auth-shell marketing-shell">
+        <section className="marketing">
           <h1>TenderPilot AI</h1>
-          <p>Secure workspace login for your bidding team.</p>
+          <p className="lead">
+            AI Tender & RFP Auto-Filler for agencies, construction firms, and IT service teams.
+          </p>
+          <div className="marketing-grid">
+            <article>
+              <h3>What you get</h3>
+              <ul className="plain-list">
+                <li>Upload past winning proposals once</li>
+                <li>Auto-parse PDF, DOCX, XLSX tenders</li>
+                <li>Side-by-side review with source citations</li>
+                <li>Export to XLSX/PDF and portal JSON/XML</li>
+              </ul>
+            </article>
+            <article>
+              <h3>Pricing</h3>
+              <ul className="plain-list">
+                <li>Free: 3 tenders/month</li>
+                <li>Pro: ₹4,999/month (unlimited + filled Excel export)</li>
+                <li>Team: ₹12,999/month (team-ready workspace)</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section className="auth-card">
+          <h2>Workspace Access</h2>
+          <p>Secure login for your bidding team.</p>
 
           {errorMessage && <p className="error-banner">{errorMessage}</p>}
 
@@ -829,7 +863,12 @@ function App() {
                     <article className="card" key={item.id}>
                       <div className="question-head">
                         <h3>Q: {item.question}</h3>
-                        <span className={`chip trust ${band}`}>{band.toUpperCase()} TRUST</span>
+                        <div className="trust-wrap">
+                          <span className={`chip trust ${band}`}>{band.toUpperCase()} TRUST</span>
+                          <span className="trust-help" title={trustTooltip(item)} aria-label="Trust details">
+                            i
+                          </span>
+                        </div>
                       </div>
                       <div className="qa-grid">
                         <div>

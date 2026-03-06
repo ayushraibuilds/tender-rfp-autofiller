@@ -4,16 +4,35 @@
     <meta charset="UTF-8" />
     <title>TenderPilot Filler</title>
     <style>
-      body { font-family: Arial, sans-serif; width: 320px; margin: 12px; }
-      textarea { width: 100%; min-height: 150px; }
-      button { margin-top: 8px; width: 100%; }
-      small { color: #555; display: block; margin-top: 6px; }
+      body { font-family: Arial, sans-serif; width: 340px; margin: 12px; }
+      input, textarea, button, select { width: 100%; margin-top: 6px; }
+      textarea { min-height: 90px; }
+      button { margin-top: 10px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      small { color: #555; display: block; margin-top: 8px; }
+      label { display: block; margin-top: 8px; font-size: 12px; font-weight: bold; }
     </style>
   </head>
   <body>
     <h3>TenderPilot Portal Filler</h3>
-    <textarea id="draftJson" placeholder='Paste draft JSON: {"draft":[{"question":"...","answer":"..."}]}'></textarea>
-    <button id="fillBtn">Fill Current Page</button>
+    <label for="apiBaseUrl">API Base URL</label>
+    <input id="apiBaseUrl" placeholder="http://localhost:8787" />
+
+    <label for="token">Access Token</label>
+    <input id="token" placeholder="Paste Bearer token" />
+
+    <label for="workspaceId">Workspace ID</label>
+    <input id="workspaceId" placeholder="Workspace UUID" />
+
+    <div class="row">
+      <button id="generateFillBtn">Generate + Fill</button>
+      <button id="saveBtn">Save Config</button>
+    </div>
+
+    <label for="draftJson">Manual Draft JSON (fallback)</label>
+    <textarea id="draftJson" placeholder='{"draft":[{"question":"...","answer":"..."}]}'></textarea>
+    <button id="fillBtn">Fill Using Manual JSON</button>
+
     <small id="status"></small>
     <script src="popup.js"></script>
   </body>

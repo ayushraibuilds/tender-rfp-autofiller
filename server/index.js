@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs'
 import rateLimit from 'express-rate-limit'
 import PDFDocument from 'pdfkit'
 import ExcelJS from 'exceljs'
-import { getDb } from './db.js'
+import { getDb, getDbDialect } from './db.js'
 import { embedTexts, cosineSimilarity, getEmbeddingBackendLabel } from './vector.js'
 import { chunkText, extractQuestions, extractTextFromUpload } from './text.js'
 import { requireAuth, signAccessToken, userHasWorkspaceAccess } from './auth.js'
@@ -68,6 +68,47 @@ async function getCandidateChunks(db, workspaceId, query, options = {}) {
   const { limit = 300, recentDays = null } = options
   const cutoffIso = buildCutoffIso(recentDays)
   const ftsQuery = buildFtsQuery(query)
+  const dialect = getDbDialect()
+
+  if (dialect === 'postgres') {
+    if (ftsQuery) {
+      const pgFtsRows = await db.all(
+        `
+        SELECT chunks.id, chunks.content, chunks.embedding, documents.file_name, documents.version, documents.added_at
+        FROM chunks
+        JOIN documents ON documents.id = chunks.document_id
+        WHERE chunks.company_id = ?
+        AND to_tsvector('simple', chunks.content) @@ plainto_tsquery('simple', ?)
+        AND (? IS NULL OR documents.added_at >= ?)
+        LIMIT ?
+        `,
+        workspaceId,
+        query,
+        cutoffIso,
+        cutoffIso,
+        limit,
+      )
+
+      if (pgFtsRows.length > 0) {
+        return pgFtsRows
+      }
+    }
+
+    return db.all(
+      `
+      SELECT chunks.id, chunks.content, chunks.embedding, documents.file_name, documents.version, documents.added_at
+      FROM chunks
+      JOIN documents ON documents.id = chunks.document_id
+      WHERE chunks.company_id = ?
+      AND (? IS NULL OR documents.added_at >= ?)
+      LIMIT ?
+      `,
+      workspaceId,
+      cutoffIso,
+      cutoffIso,
+      limit,
+    )
+  }
 
   if (!ftsQuery) {
     return db.all(
@@ -327,7 +368,30 @@ async function incrementTenderUsage(db, workspaceId, usage) {
 export function createApp() {
   const app = express()
 
-  app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }))
+  const allowedOrigins = String(process.env.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (!origin) {
+          callback(null, true)
+          return
+        }
+        if (origin.startsWith('chrome-extension://')) {
+          callback(null, true)
+          return
+        }
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true)
+          return
+        }
+        callback(new Error('Origin not allowed by CORS'))
+      },
+    }),
+  )
   app.use(express.json({ limit: '4mb' }))
   app.use(
     rateLimit({
@@ -339,7 +403,7 @@ export function createApp() {
   )
 
   app.get('/api/health', async (_req, res) => {
-    res.json({ ok: true, embeddings: getEmbeddingBackendLabel() })
+    res.json({ ok: true, embeddings: getEmbeddingBackendLabel(), database: getDbDialect() })
   })
 
   app.get('/api/templates/india', requireAuth, async (_req, res) => {
@@ -707,7 +771,11 @@ export function createApp() {
           const embeddings = await embedTexts(chunks)
           const documentId = crypto.randomUUID()
 
-          await db.exec('BEGIN')
+          const dialect = getDbDialect()
+
+          if (dialect === 'sqlite') {
+            await db.exec('BEGIN')
+          }
           try {
             await db.run(
               'INSERT INTO documents (id, company_id, file_name, source_path, version, mime_type, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -721,26 +789,40 @@ export function createApp() {
             )
 
             for (let i = 0; i < chunks.length; i += 1) {
-              const insertResult = await db.run(
-                'INSERT INTO chunks (company_id, document_id, content, embedding) VALUES (?, ?, ?, ?)',
-                workspaceId,
-                documentId,
-                chunks[i],
-                JSON.stringify(embeddings[i]),
-              )
+              if (dialect === 'sqlite') {
+                const insertResult = await db.run(
+                  'INSERT INTO chunks (company_id, document_id, content, embedding) VALUES (?, ?, ?, ?)',
+                  workspaceId,
+                  documentId,
+                  chunks[i],
+                  JSON.stringify(embeddings[i]),
+                )
 
-              await db.run(
-                'INSERT INTO chunks_fts(rowid, content, company_id, chunk_id) VALUES (?, ?, ?, ?)',
-                insertResult.lastID,
-                chunks[i],
-                workspaceId,
-                insertResult.lastID,
-              )
+                await db.run(
+                  'INSERT INTO chunks_fts(rowid, content, company_id, chunk_id) VALUES (?, ?, ?, ?)',
+                  insertResult.lastID,
+                  chunks[i],
+                  workspaceId,
+                  insertResult.lastID,
+                )
+              } else {
+                await db.run(
+                  'INSERT INTO chunks (company_id, document_id, content, embedding) VALUES (?, ?, ?, ?)',
+                  workspaceId,
+                  documentId,
+                  chunks[i],
+                  JSON.stringify(embeddings[i]),
+                )
+              }
             }
 
-            await db.exec('COMMIT')
+            if (dialect === 'sqlite') {
+              await db.exec('COMMIT')
+            }
           } catch (error) {
-            await db.exec('ROLLBACK')
+            if (dialect === 'sqlite') {
+              await db.exec('ROLLBACK')
+            }
             throw error
           }
 
