@@ -44,11 +44,13 @@ body {
 }
 
 .marketing {
-  border: 1px solid var(--line);
-  background: linear-gradient(140deg, #fffef8, #fff9e7);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: linear-gradient(140deg, rgba(255, 254, 248, 0.5), rgba(255, 249, 231, 0.7));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-radius: 1rem;
-  padding: 1rem;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  padding: 1.5rem;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
 }
 
 .marketing h1 {
@@ -77,11 +79,13 @@ body {
 
 .auth-card {
   width: min(460px, 100%);
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 254, 248, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-radius: 1rem;
-  padding: 1rem;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  padding: 1.5rem;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08);
   display: grid;
   gap: 0.75rem;
 }
@@ -236,11 +240,13 @@ nav {
 }
 
 .card {
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  background: rgba(255, 254, 248, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-radius: 1rem;
-  padding: 1rem;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+  padding: 1.25rem;
+  box-shadow: 0 8px 32px rgba(15, 23, 42, 0.06);
 }
 
 .card h3 {
@@ -292,12 +298,16 @@ button:disabled {
 }
 
 .primary {
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   color: #f6fffd;
+  box-shadow: 0 4px 15px rgba(15, 118, 110, 0.3);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--primary-strong);
+  background: linear-gradient(135deg, var(--primary-strong), #08423d);
+  box-shadow: 0 6px 20px rgba(15, 118, 110, 0.4);
+  transform: translateY(-1px);
 }
 
 .secondary {

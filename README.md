@@ -154,3 +154,13 @@ npm run build
 ```bash
 npm run test
 ```
+
+## Release Checklist
+1. **Frontend**: Build React app (`npm run build`) and test Vercel deployment preview.
+2. **Backend**: Verify `JWT_SECRET` and `EMBEDDING_PROVIDER` are seeded correctly on Railway.
+3. **Database**: If using Supabase, ensure migrations from local SQLite have been executed (`npm run migrate:supabase`).
+4. **Chrome Extension**: 
+   - Update version string in `extension/manifest.json`.
+   - Ensure the server URL in the extension configs correctly points to the new Railway backend.
+   - Zip the `extension/` directory.
+   - Upload the zip to the Chrome Developer Dashboard.

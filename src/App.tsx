@@ -428,7 +428,7 @@ function App() {
   const updateDraftStatus = (id: string, status: 'ready' | 'needs-attention' | 'accepted' | 'rejected') => {
     setDraft((prev) =>
       prev.map((item) =>
-        item.id === id ? { ...item, status: status as any } : item
+        item.id === id ? { ...item, status } : item
       )
     )
   }
