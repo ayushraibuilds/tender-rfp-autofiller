@@ -5,10 +5,14 @@ const draftJson = document.getElementById('draftJson')
 const apiBaseUrlInput = document.getElementById('apiBaseUrl')
 const tokenInput = document.getElementById('token')
 const workspaceIdInput = document.getElementById('workspaceId')
+const statusBox = document.getElementById('statusBox')
+const spinner = document.getElementById('spinner')
 const status = document.getElementById('status')
 
-function setStatus(message) {
+function setStatus(message, type = 'info', isLoading = false) {
   status.textContent = message
+  statusBox.className = `status-box active ${type}`
+  spinner.style.display = isLoading ? 'inline-block' : 'none'
 }
 
 async function getActiveTab() {
@@ -53,38 +57,38 @@ async function fillWithPayload(payload) {
   if (!response?.ok) {
     throw new Error(response?.error || 'Filling failed.')
   }
-  setStatus(`Filled ${response.filled} fields.`)
+  setStatus(`Successfully filled ${response.filled} inputs!`, 'success')
 }
 
 fillBtn.addEventListener('click', async () => {
-  setStatus('')
+  setStatus('Parsing JSON...', 'info', true)
 
   let parsed
   try {
     parsed = JSON.parse(draftJson.value || '{}')
   } catch {
-    setStatus('Invalid JSON format.')
+    setStatus('Invalid JSON format.', 'error')
     return
   }
 
   try {
     await fillWithPayload(parsed)
   } catch (error) {
-    setStatus(`Error: ${error instanceof Error ? error.message : 'Fill failed.'}`)
+    setStatus(`Error: ${error instanceof Error ? error.message : 'Fill failed.'}`, 'error')
   }
 })
 
 saveBtn.addEventListener('click', async () => {
   try {
     await saveConfig()
-    setStatus('Config saved.')
+    setStatus('Configuration saved securely.', 'success')
   } catch (error) {
-    setStatus(`Error: ${error instanceof Error ? error.message : 'Save failed.'}`)
+    setStatus(`Error: ${error instanceof Error ? error.message : 'Save failed.'}`, 'error')
   }
 })
 
 generateFillBtn.addEventListener('click', async () => {
-  setStatus('Collecting questions from page...')
+  setStatus('Collecting questions from page...', 'info', true)
 
   try {
     await saveConfig()
@@ -94,7 +98,7 @@ generateFillBtn.addEventListener('click', async () => {
     const workspaceId = workspaceIdInput.value.trim()
 
     if (!apiBaseUrl || !token || !workspaceId) {
-      setStatus('API URL, token, and workspace ID are required.')
+      setStatus('API URL, token, and workspace ID are required.', 'error')
       return
     }
 
@@ -102,11 +106,11 @@ generateFillBtn.addEventListener('click', async () => {
     const questions = Array.isArray(collect?.questions) ? collect.questions : []
 
     if (questions.length === 0) {
-      setStatus('No fillable questions detected on this page.')
+      setStatus('No fillable questions detected on this page.', 'error')
       return
     }
 
-    setStatus(`Generating answers for ${questions.length} questions...`)
+    setStatus(`Generating answers for ${questions.length} questions...`, 'info', true)
     const response = await fetch(`${apiBaseUrl}/api/tender/draft`, {
       method: 'POST',
       headers: {
@@ -125,9 +129,10 @@ generateFillBtn.addEventListener('click', async () => {
       throw new Error('No draft answers returned by API.')
     }
 
+    setStatus('Filling answers into page...', 'info', true)
     await fillWithPayload({ draft: body.draft })
   } catch (error) {
-    setStatus(`Error: ${error instanceof Error ? error.message : 'Generate + fill failed.'}`)
+    setStatus(`Error: ${error instanceof Error ? error.message : 'Generate + fill failed.'}`, 'error')
   }
 })
 

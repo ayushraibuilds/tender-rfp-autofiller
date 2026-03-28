@@ -16,7 +16,7 @@ export type DraftQuestion = {
   answer: string
   confidence: number
   band?: 'green' | 'yellow' | 'red'
-  status: 'ready' | 'needs-attention'
+  status: 'ready' | 'needs-attention' | 'accepted' | 'rejected'
   source: string
   citations?: Array<{
     source: string

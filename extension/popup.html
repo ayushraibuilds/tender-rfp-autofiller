@@ -4,36 +4,57 @@
     <meta charset="UTF-8" />
     <title>TenderPilot Filler</title>
     <style>
-      body { font-family: Arial, sans-serif; width: 340px; margin: 12px; }
-      input, textarea, button, select { width: 100%; margin-top: 6px; }
-      textarea { min-height: 90px; }
-      button { margin-top: 10px; }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      small { color: #555; display: block; margin-top: 8px; }
-      label { display: block; margin-top: 8px; font-size: 12px; font-weight: bold; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 340px; margin: 0; background: #fafafa; color: #333; }
+      header { background: #085041; color: white; padding: 16px; text-align: center; }
+      header h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
+      .container { padding: 16px; }
+      input, textarea, select { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+      textarea { min-height: 80px; resize: vertical; }
+      button { width: 100%; box-sizing: border-box; margin-top: 12px; padding: 12px; background: #1D9E75; color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+      button:hover { background: #157959; }
+      button.secondary { background: #fff; color: #333; border: 1px solid #ddd; }
+      button.secondary:hover { background: #f0f0f0; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      label { display: block; margin-top: 12px; font-size: 12px; font-weight: 600; color: #555; }
+      .status-box { margin-top: 16px; padding: 12px; border-radius: 6px; background: #eef2ff; color: #1e40af; font-size: 12px; display: none; align-items: center; gap: 8px; }
+      .status-box.active { display: flex; }
+      .status-box.error { background: #fef2f2; color: #991b1b; }
+      .status-box.success { background: #f0fdf4; color: #166534; }
+      .spinner { width: 14px; height: 14px; border: 2px solid currentcolor; border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: spin 1s linear infinite; }
+      @keyframes spin { 100% { transform: rotate(360deg); } }
+      .divider { margin: 20px 0; border-top: 1px solid #eee; position: relative; }
+      .divider span { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: #fafafa; padding: 0 10px; font-size: 11px; color: #888; }
     </style>
   </head>
   <body>
-    <h3>TenderPilot Portal Filler</h3>
-    <label for="apiBaseUrl">API Base URL</label>
-    <input id="apiBaseUrl" placeholder="http://localhost:8787" />
+    <header>
+      <h3>📝 TenderPilot Portal Autofill</h3>
+    </header>
+    <div class="container">
+      <label for="apiBaseUrl">API Base URL</label>
+      <input id="apiBaseUrl" placeholder="http://localhost:8787" />
 
-    <label for="token">Access Token</label>
-    <input id="token" placeholder="Paste Bearer token" />
+      <label for="token">Access Token (Bearer)</label>
+      <input id="token" type="password" placeholder="Paste your workspace token" />
 
-    <label for="workspaceId">Workspace ID</label>
-    <input id="workspaceId" placeholder="Workspace UUID" />
+      <label for="workspaceId">Workspace ID</label>
+      <input id="workspaceId" placeholder="Workspace UUID" />
 
-    <div class="row">
-      <button id="generateFillBtn">Generate + Fill</button>
-      <button id="saveBtn">Save Config</button>
+      <button id="saveBtn" class="secondary">Save Configuration</button>
+
+      <div class="divider"><span>ACTIONS</span></div>
+
+      <button id="generateFillBtn">✨ Auto-Fill Page with AI</button>
+
+      <label for="draftJson" style="margin-top:20px;">Manual Override JSON</label>
+      <textarea id="draftJson" placeholder='{"draft":[{"question":"...","answer":"..."}]}'></textarea>
+      <button id="fillBtn" class="secondary">Fill using JSON</button>
+
+      <div id="statusBox" class="status-box">
+        <div id="spinner" class="spinner" style="display:none;"></div>
+        <span id="status">Ready</span>
+      </div>
     </div>
-
-    <label for="draftJson">Manual Draft JSON (fallback)</label>
-    <textarea id="draftJson" placeholder='{"draft":[{"question":"...","answer":"..."}]}'></textarea>
-    <button id="fillBtn">Fill Using Manual JSON</button>
-
-    <small id="status"></small>
     <script src="popup.js"></script>
   </body>
 </html>

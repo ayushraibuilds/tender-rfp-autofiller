@@ -20,7 +20,7 @@ import {
   type Workspace,
 } from './lib/apiClient'
 
-type Page = 'dashboard' | 'knowledge' | 'tender' | 'review'
+type Page = 'dashboard' | 'knowledge' | 'tender' | 'review' | 'settings' | 'history'
 type AuthMode = 'login' | 'register'
 type ParseStatus = 'indexed' | 'failed'
 
@@ -110,6 +110,7 @@ function App() {
   const [isAskingClarifications, setIsAskingClarifications] = useState(false)
   const [clarifications, setClarifications] = useState<string[]>([])
   const [useLastQuarter, setUseLastQuarter] = useState(false)
+  const [tenderProgress, setTenderProgress] = useState(0)
 
   const [indiaTemplates, setIndiaTemplates] = useState<Array<{ id: string; title: string; body: string }>>([])
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false)
@@ -196,6 +197,8 @@ function App() {
     { id: 'knowledge', label: 'Knowledge Base' },
     { id: 'tender', label: 'New Tender' },
     { id: 'review', label: 'AI Draft Review' },
+    { id: 'history', label: 'Tender History' },
+    { id: 'settings', label: 'Settings' },
   ]
 
   const clearWorkspaceData = () => {
@@ -349,6 +352,11 @@ function App() {
     setErrorMessage('')
     setIsParsingTender(true)
     setTenderFileRef(file)
+    setTenderProgress(10)
+
+    const progressInterval = setInterval(() => {
+      setTenderProgress((prev) => Math.min(prev + 10, 90))
+    }, 500)
 
     const base = {
       id: `${file.name}-${file.lastModified}`,
@@ -361,12 +369,15 @@ function App() {
       const parsed = await parseTenderFile(token, selectedWorkspaceId, file)
       setTenderDoc({ ...base, parseStatus: 'indexed' })
       setTenderQuestions(parsed.questions.length > 0 ? parsed.questions : FALLBACK_TENDER_QUESTIONS)
+      setTenderProgress(100)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Parsing failed.'
       setTenderDoc({ ...base, parseStatus: 'failed', parseError: message })
       setTenderQuestions([])
       setErrorMessage(message)
+      setTenderProgress(0)
     } finally {
+      clearInterval(progressInterval)
       setIsParsingTender(false)
     }
   }
@@ -411,6 +422,14 @@ function App() {
             }
           : item,
       ),
+    )
+  }
+
+  const updateDraftStatus = (id: string, status: 'ready' | 'needs-attention' | 'accepted' | 'rejected') => {
+    setDraft((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, status: status as any } : item
+      )
     )
   }
 
@@ -529,75 +548,133 @@ function App() {
 
   if (!token || !user) {
     return (
-      <main className="auth-shell marketing-shell">
-        <section className="marketing">
-          <h1>TenderPilot AI</h1>
-          <p className="lead">
-            AI Tender & RFP Auto-Filler for agencies, construction firms, and IT service teams.
-          </p>
-          <div className="marketing-grid">
-            <article>
-              <h3>What you get</h3>
-              <ul className="plain-list">
-                <li>Upload past winning proposals once</li>
-                <li>Auto-parse PDF, DOCX, XLSX tenders</li>
-                <li>Side-by-side review with source citations</li>
-                <li>Export to XLSX/PDF and portal JSON/XML</li>
-              </ul>
-            </article>
-            <article>
-              <h3>Pricing</h3>
-              <ul className="plain-list">
-                <li>Free: 3 tenders/month</li>
-                <li>Pro: ₹4,999/month (unlimited + filled Excel export)</li>
-                <li>Team: ₹12,999/month (team-ready workspace)</li>
-              </ul>
-            </article>
+      <main className="landing-page-container">
+        {/* Navigation Bar */}
+        <nav className="landing-nav">
+          <div className="landing-logo">📝 TenderPilot <span className="logo-ai">AI</span></div>
+          <div className="landing-nav-links">
+            <a href="#features">Features</a>
+            <a href="#pricing">Pricing</a>
+            <button className="login-btn-nav" onClick={() => { document.getElementById('auth-section')?.scrollIntoView({ behavior: 'smooth' }) }}>Sign In</button>
+          </div>
+        </nav>
+
+        {/* Hero Section */}
+        <section className="hero-section">
+          <div className="hero-content">
+            <h1 className="hero-title">Win More Tenders in <span className="highlight-text">Half the Time</span></h1>
+            <p className="hero-subtitle">
+              The AI-powered RFP Auto-Filler for agencies, construction firms, and IT service teams. 
+              Upload past winning proposals once, and generate accurate drafts for new tenders instantly.
+            </p>
+            <button className="primary-cta" onClick={() => { document.getElementById('auth-section')?.scrollIntoView({ behavior: 'smooth' }) }}>
+              Start for Free Today →
+            </button>
+          </div>
+          <div className="demo-video-placeholder">
+            <div className="play-button">▶</div>
+            <p>Watch 2-Minute Demo</p>
           </div>
         </section>
 
-        <section className="auth-card">
-          <h2>Workspace Access</h2>
-          <p>Secure login for your bidding team.</p>
+        {/* Features Section */}
+        <section id="features" className="features-section">
+          <h2>Everything you need to scale your bidding</h2>
+          <div className="features-grid">
+            <div className="feature-card">
+              <div className="feature-icon">📚</div>
+              <h3>Smart Knowledge Base</h3>
+              <p>Upload your past winning proposals and company docs. Our vector DB will index everything to build your proprietary brain.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon">⚡</div>
+              <h3>Instant Auto-Fill</h3>
+              <p>Upload any PDF, DOCX, or Excel tender. TenderPilot automatically extracts questions and drafts highly accurate answers.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon">🔍</div>
+              <h3>Source Citations</h3>
+              <p>Every AI-generated answer includes a direct quotation and link back to your original documents. No hallucinations.</p>
+            </div>
+            <div className="feature-card">
+              <div className="feature-icon">📤</div>
+              <h3>1-Click Export</h3>
+              <p>Download the finished draft as a beautiful PDF, or let us fill the original Excel spreadsheet automatically. Supports GeM portal JSON/XML!</p>
+            </div>
+          </div>
+        </section>
 
-          {errorMessage && <p className="error-banner">{errorMessage}</p>}
-
-          <div className="auth-tabs">
-            <button type="button" className={authMode === 'login' ? 'nav-item active' : 'nav-item'} onClick={() => setAuthMode('login')}>
-              Login
-            </button>
-            <button type="button" className={authMode === 'register' ? 'nav-item active' : 'nav-item'} onClick={() => setAuthMode('register')}>
-              Register
-            </button>
+        {/* Auth / Pricing Split Section */}
+        <section id="auth-section" className="split-section">
+          <div className="pricing-column" id="pricing">
+            <h2>Simple Pricing</h2>
+            <div className="pricing-cards">
+              <div className="price-card">
+                <h3>Free Starter</h3>
+                <div className="price">₹0<span>/mo</span></div>
+                <ul>
+                  <li>✅ 3 tenders per month</li>
+                  <li>✅ 50MB Knowledge Base</li>
+                  <li>✅ Standard PDF Export</li>
+                </ul>
+              </div>
+              <div className="price-card highlighted">
+                <h3>Pro Plan</h3>
+                <div className="price">₹4,999<span>/mo</span></div>
+                <ul>
+                  <li>✅ Unlimited tenders</li>
+                  <li>✅ 5GB Knowledge Base</li>
+                  <li>✅ Filled-Excel Export</li>
+                </ul>
+              </div>
+            </div>
           </div>
 
-          {authMode === 'register' && (
-            <label>
-              Full name
-              <input value={authName} onChange={(event) => setAuthName(event.target.value)} />
-            </label>
-          )}
+          <div className="auth-column">
+            <div className="auth-card">
+              <h2>Workspace Access</h2>
+              <p>Secure login for your bidding team.</p>
 
-          <label>
-            Email
-            <input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
-          </label>
+              {errorMessage && <p className="error-banner">{errorMessage}</p>}
 
-          <label>
-            Password
-            <input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
-          </label>
+              <div className="auth-tabs">
+                <button type="button" className={authMode === 'login' ? 'nav-item active' : 'nav-item'} onClick={() => setAuthMode('login')}>
+                  Login
+                </button>
+                <button type="button" className={authMode === 'register' ? 'nav-item active' : 'nav-item'} onClick={() => setAuthMode('register')}>
+                  Register
+                </button>
+              </div>
 
-          {authMode === 'register' && (
-            <label>
-              First workspace name
-              <input placeholder="Example: Acme Bidding Team" value={authWorkspaceName} onChange={(event) => setAuthWorkspaceName(event.target.value)} />
-            </label>
-          )}
+              {authMode === 'register' && (
+                <label>
+                  Full name
+                  <input value={authName} onChange={(event) => setAuthName(event.target.value)} />
+                </label>
+              )}
 
-          <button type="button" className="primary" onClick={() => void handleAuth()}>
-            {isAuthenticating ? 'Please wait...' : authMode === 'login' ? 'Login' : 'Create Account'}
-          </button>
+              <label>
+                Email
+                <input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
+              </label>
+
+              <label>
+                Password
+                <input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
+              </label>
+
+              {authMode === 'register' && (
+                <label>
+                  Workspace Name
+                  <input placeholder="Ex: Acme Bids" value={authWorkspaceName} onChange={(event) => setAuthWorkspaceName(event.target.value)} />
+                </label>
+              )}
+
+              <button type="button" className="primary full-width" onClick={() => void handleAuth()}>
+                {isAuthenticating ? 'Please wait...' : authMode === 'login' ? 'Sign In' : 'Create Free Account'}
+              </button>
+            </div>
+          </div>
         </section>
       </main>
     )
@@ -808,7 +885,14 @@ function App() {
                 <input type="file" accept=".pdf,.doc,.docx,.xlsx" onChange={(event) => { void setTenderFile(event.target.files) }} />
               </div>
               <p>{tenderDoc ? `${tenderDoc.name} (${tenderDoc.sizeLabel})` : 'No file selected'}</p>
-              {isParsingTender && <small>Parsing tender file...</small>}
+              {isParsingTender && (
+                <div className="progress-container" style={{ margin: '12px 0' }}>
+                  <div className="progress-bar" style={{ height: 8, backgroundColor: '#eee', borderRadius: 4, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${tenderProgress}%`, backgroundColor: '#1D9E75', transition: 'width 0.3s' }} />
+                  </div>
+                  <small style={{ marginTop: 4, display: 'block', color: '#666' }}>Parsing tender file... {tenderProgress}%</small>
+                </div>
+              )}
               {tenderDoc?.parseStatus === 'indexed' && <small>Parsed questions detected: {tenderQuestions.length}</small>}
               {tenderDoc?.parseStatus === 'failed' && <small>Could not parse this file: {tenderDoc.parseError}</small>}
               <label className="toggle-row">
@@ -860,7 +944,7 @@ function App() {
                 {draft.map((item) => {
                   const band = item.band || confidenceBand(item.confidence)
                   return (
-                    <article className="card" key={item.id}>
+                    <article className={`card draft-card status-${item.status}`} style={{ borderLeft: item.status === 'accepted' ? '4px solid #1D9E75' : item.status === 'rejected' ? '4px solid #E24B4A' : 'none' }} key={item.id}>
                       <div className="question-head">
                         <h3>Q: {item.question}</h3>
                         <div className="trust-wrap">
@@ -877,10 +961,16 @@ function App() {
                         </div>
                         <div>
                           <h4>AI Draft</h4>
-                          <p>{item.answer}</p>
+                          <p style={{ textDecoration: item.status === 'rejected' ? 'line-through' : 'none', color: item.status === 'rejected' ? '#888' : 'inherit' }}>{item.answer}</p>
                         </div>
                         <div>
-                          <h4>Edit Answer</h4>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                            <h4>Edit Answer</h4>
+                            <div className="review-btn-group" style={{ display: 'flex', gap: 8 }}>
+                              <button type="button" onClick={() => updateDraftStatus(item.id, 'accepted')} title="Accept" style={{ padding: '4px 8px', fontSize: 12, backgroundColor: item.status === 'accepted' ? '#E1F5EE' : '#FFF', color: item.status === 'accepted' ? '#0F6E56' : '#333', border: `1px solid ${item.status === 'accepted' ? '#1D9E75' : '#CCC'}`, borderRadius: 4, cursor: 'pointer' }}>✅ Accept</button>
+                              <button type="button" onClick={() => updateDraftStatus(item.id, 'rejected')} title="Reject" style={{ padding: '4px 8px', fontSize: 12, backgroundColor: item.status === 'rejected' ? '#FCEBEB' : '#FFF', color: item.status === 'rejected' ? '#A32D2D' : '#333', border: `1px solid ${item.status === 'rejected' ? '#E24B4A' : '#CCC'}`, borderRadius: 4, cursor: 'pointer' }}>❌ Reject</button>
+                            </div>
+                          </div>
                           <textarea value={item.answer} onChange={(event) => updateDraftAnswer(item.id, event.target.value)} />
                         </div>
                         <div>
@@ -908,6 +998,76 @@ function App() {
                 })}
               </div>
             )}
+          </section>
+        )}
+
+        {page === 'history' && (
+          <section>
+            <header className="header-row">
+              <div>
+                <h2>Tender History & Audit Trail</h2>
+                <p>View past generated responses and their approval status.</p>
+              </div>
+            </header>
+            <article className="card single-card">
+              <div style={{ padding: 24, textAlign: 'center', color: '#888' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>📁</div>
+                <h3>No History Available</h3>
+                <p>Past tenders will appear here once saved.</p>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {page === 'settings' && (
+          <section>
+            <header className="header-row">
+              <div>
+                <h2>Workspace Settings</h2>
+                <p>Configure defaults for AI generation to match your brand voice.</p>
+              </div>
+            </header>
+            <div className="grid-cards two-col">
+              <article className="card">
+                <h3>Company Profile</h3>
+                <label>
+                  Company Legal Name
+                  <input type="text" placeholder="e.g. Acme Corporation" defaultValue={selectedWorkspace?.name} />
+                </label>
+                <label>
+                  Establishment Year
+                  <input type="text" placeholder="e.g. 2015" />
+                </label>
+                <label>
+                  Primary Services
+                  <textarea placeholder="List main services" rows={3} />
+                </label>
+                <button type="button" className="primary" onClick={() => alert('Saved!')}>Save Profile</button>
+              </article>
+              <article className="card">
+                <h3>AI Response Preferences</h3>
+                <label>
+                  Tone of Voice
+                  <select>
+                    <option>Professional & Formal</option>
+                    <option>Direct & Concise</option>
+                    <option>Persuasive & Sales-oriented</option>
+                  </select>
+                </label>
+                <label>
+                  Preferred Formatting
+                  <select>
+                    <option>Paragraphs</option>
+                    <option>Bullet Points</option>
+                  </select>
+                </label>
+                <label className="toggle-row">
+                  <input type="checkbox" defaultChecked />
+                  Always include compliance disclaimers
+                </label>
+                <button type="button" className="primary" onClick={() => alert('Saved!')}>Save Preferences</button>
+              </article>
+            </div>
           </section>
         )}
       </main>
