@@ -27,7 +27,7 @@ jobs:
         DATABASE_PROVIDER: sqlite
         GROQ_API_KEY: dummy
         JWT_SECRET: dummy_secret_ci
-      run: npm run test
+      run: rm -f .env && npm run test
 
     - name: Build Frontend
       run: npm run build
